@@ -1,0 +1,15 @@
+{
+  "name": "concord-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "livekit-server-sdk": "^2.13.0",
+    "socket.io": "^4.8.1"
+  }
+}

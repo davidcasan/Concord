@@ -1,0 +1,27 @@
+{
+  "name": "concord",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mini Discord para um grupo pequeno de amigos: salas de texto e voz, câmera, microfone e compartilhamento de tela com áudio.",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "setup": "npm install && node scripts/setup.mjs && npm run build",
+    "build": "node scripts/build-branding.mjs && npm run build -w client",
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/src/index.js",
+    "dev:client": "npm run dev -w client",
+    "desktop": "npm start --prefix desktop",
+    "desktop:install": "npm install --prefix desktop",
+    "desktop:dist": "node scripts/build-branding.mjs && npm run dist --prefix desktop",
+    "server:dist": "npm run build && node scripts/build-server.mjs",
+    "dist": "npm run server:dist && npm run desktop:dist",
+    "create-user": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/src/cli.js create-user",
+    "reset-password": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/src/cli.js reset-password"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0",
+    "postject": "^1.0.0-alpha.6"
+  }
+}

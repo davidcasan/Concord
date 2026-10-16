@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <title>Concord</title>
+    <style>
+      body {
+        margin: 0;
+        height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #1e1f22;
+        color: #dbdee1;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+      }
+      form {
+        width: 420px;
+        background: #313338;
+        padding: 32px;
+        border-radius: 8px;
+        box-shadow: 0 8px 32px #0006;
+      }
+      .logo {
+        width: 56px;
+        height: 56px;
+        border-radius: 18px;
+        margin-bottom: 16px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 22px;
+        color: #f2f3f5;
+      }
+      p {
+        color: #949ba4;
+        margin: 0 0 20px;
+        font-size: 14px;
+      }
+      label {
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #949ba4;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        margin: 8px 0 16px;
+        padding: 10px;
+        border: none;
+        border-radius: 4px;
+        background: #1e1f22;
+        color: #dbdee1;
+        font-size: 15px;
+        outline: none;
+      }
+      input:focus {
+        outline: 2px solid #5865f2;
+      }
+      button {
+        width: 100%;
+        padding: 11px;
+        border: none;
+        border-radius: 4px;
+        background: #5865f2;
+        color: white;
+        font-weight: 600;
+        font-size: 15px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #4752c4;
+      }
+      .error {
+        background: #f23f4322;
+        color: #ff8a8c;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 14px;
+        margin-bottom: 16px;
+      }
+      .error:empty {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="form">
+      <img class="logo" src="assets/concord.svg" alt="Concord" />
+      <h1>Conectar ao servidor</h1>
+      <p>Cole o endereço do Concord que o dono do servidor te passou.</p>
+      <div class="error" id="error"></div>
+      <label for="url">Endereço do servidor</label>
+      <input id="url" placeholder="http://servidor:666 ou https://exemplo.ngrok-free.app" required autofocus />
+      <button>Conectar</button>
+    </form>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const input = document.getElementById('url');
+      const error = document.getElementById('error');
+      input.value = params.get('current') || '';
+      error.textContent = params.get('error') || '';
+      document.getElementById('form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        let url = input.value.trim();
+        if (!/^https?:\/\//.test(url)) url = `http://${url}`;
+        try {
+          await window.minicordDesktop.saveServer(url);
+        } catch (err) {
+          error.textContent = 'Endereço inválido.';
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,57 @@
+{
+  "name": "concord-desktop",
+  "productName": "Concord",
+  "version": "1.0.0",
+  "description": "Aplicativo desktop Concord",
+  "author": "Concord",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "postinstall": "node node_modules/electron/install.js",
+    "start": "node start.js",
+    "dist": "electron-builder --win",
+    "server-manager": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-server-manager.ps1",
+    "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File native/build.ps1"
+  },
+  "build": {
+    "appId": "com.concord.desktop",
+    "productName": "Concord",
+    "icon": "assets/concord.ico",
+    "files": [
+      "main.js",
+      "preload.js",
+      "setup.html",
+      "default-server.json",
+      "assets/concord.svg"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "shortcutName": "Concord",
+      "perMachine": true,
+      "allowElevation": true
+    },
+    "portable": {
+      "artifactName": "Concord-portatil.exe"
+    },
+    "extraResources": [
+      {
+        "from": "native/minicord-audio.exe",
+        "to": "minicord-audio.exe"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3"
+  }
+}

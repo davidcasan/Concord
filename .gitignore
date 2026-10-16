@@ -1,0 +1,10 @@
+node_modules/
+client/dist/
+desktop/dist/
+server/dist/
+data/
+.env
+livekit/livekit-server*
+livekit/livekit.yaml
+livekit/LICENSE
+desktop/default-server.json
