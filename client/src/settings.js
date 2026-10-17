@@ -9,10 +9,14 @@ export const DEFAULT_SETTINGS = {
   noiseSuppression: true,
   echoCancellation: true,
   autoGainControl: true,
+  micSensitivity: 100,
+  micGateEnabled: false,
+  micGateCut: -50,
   screenQuality: '1080p30',
   shareAudio: true,
   sounds: true,
   volumes: {}, // identidade (ou identidade:screen) -> 0..1
+  lastVolumes: {},
 };
 
 export const SCREEN_QUALITIES = {

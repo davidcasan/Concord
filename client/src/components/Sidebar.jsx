@@ -30,6 +30,7 @@ export default function Sidebar({
   voiceStates,
   volumes,
   setVolume,
+  openVolumeMenu,
   voice,
   voiceChannel,
   onSelect,
@@ -118,6 +119,7 @@ export default function Sidebar({
               currentUserId={me.id}
               volumes={volumes}
               setVolume={setVolume}
+              openVolumeMenu={openVolumeMenu}
               live={voice.channelId === c.id && voice.status === 'connected'}
             />
           </div>
@@ -172,7 +174,7 @@ export default function Sidebar({
   );
 }
 
-function VoiceMembers({ members, users, currentUserId, volumes, setVolume, live }) {
+function VoiceMembers({ members, users, currentUserId, volumes, setVolume, openVolumeMenu, live }) {
   const speaking = useSpeakingParticipants();
   const speakingIds = live ? new Set(speaking.map((p) => p.identity)) : new Set();
   if (!members.length) return null;
@@ -190,6 +192,7 @@ function VoiceMembers({ members, users, currentUserId, volumes, setVolume, live 
             speaking={speakingIds.has(String(m.userId)) && !m.muted}
             volume={volume}
             onVolumeChange={(value) => setVolume(String(m.userId), value)}
+            onContextMenu={(event) => openVolumeMenu(event, String(m.userId), nameFor(user), 'mic')}
           />
         );
       })}
@@ -197,12 +200,14 @@ function VoiceMembers({ members, users, currentUserId, volumes, setVolume, live 
   );
 }
 
-function VoiceMember({ member, user, currentUser, speaking, volume, onVolumeChange }) {
+const nameFor = (user) => user?.displayName || '…';
+
+function VoiceMember({ member, user, currentUser, speaking, volume, onVolumeChange, onContextMenu }) {
   const [showVolume, setShowVolume] = useState(false);
-  const name = user?.displayName || '…';
+  const name = nameFor(user);
 
   return (
-    <div className="voice-member">
+    <div className="voice-member" onContextMenu={currentUser ? undefined : onContextMenu}>
       <Avatar user={user} size={22} speaking={speaking} />
       <span className="voice-member-name">{name}</span>
       <span className="voice-member-icons">

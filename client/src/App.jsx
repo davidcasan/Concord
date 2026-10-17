@@ -5,6 +5,7 @@ import Shell from './components/Shell.jsx';
 
 export default function App() {
   const [status, setStatus] = useState(getToken() ? 'checking' : 'out');
+  const [loginNotice, setLoginNotice] = useState('');
 
   useEffect(() => {
     if (status !== 'checking') return;
@@ -19,6 +20,7 @@ export default function App() {
   const logout = async () => {
     await api('/logout', { method: 'POST' }).catch(() => {});
     setToken(null);
+    setLoginNotice('');
     setStatus('out');
   };
 
@@ -26,12 +28,23 @@ export default function App() {
   if (status === 'out') {
     return (
       <Login
+        notice={loginNotice}
         onLogin={(token) => {
           setToken(token);
+          setLoginNotice('');
           setStatus('in');
         }}
       />
     );
   }
-  return <Shell onLogout={logout} />;
+  return (
+    <Shell
+      onLogout={logout}
+      onSessionConflict={(message) => {
+        setToken(null);
+        setLoginNotice(message);
+        setStatus('out');
+      }}
+    />
+  );
 }

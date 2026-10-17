@@ -919,6 +919,61 @@ h3 {
   accent-color: var(--accent);
   background: none;
 }
+.volume-context-menu {
+  position: fixed;
+  z-index: 1000;
+  width: 244px;
+  padding: 8px;
+  border: 1px solid #111214;
+  border-radius: 6px;
+  background: var(--bg-1);
+  color: var(--text);
+  box-shadow: 0 8px 24px #0009;
+}
+.volume-context-title,
+.volume-context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.volume-context-title {
+  color: var(--muted);
+}
+.volume-context-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.volume-context-menu button:hover {
+  background: var(--accent);
+  color: white;
+}
+.volume-context-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+}
+.volume-context-slider input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
 .tile:fullscreen {
   border-radius: 0;
   outline: none;
@@ -1132,6 +1187,37 @@ h3 {
   height: 18px;
   accent-color: var(--accent);
   flex: none;
+}
+.settings-range {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px 12px;
+  text-transform: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-range input {
+  grid-column: 1 / -1;
+  width: 100%;
+  padding: 0;
+  accent-color: var(--accent);
+  background: transparent;
+}
+.settings-range small {
+  grid-column: 1 / -1;
+  margin-top: -6px;
+  font-size: 12px;
+  font-weight: 400;
+}
+.settings-range.disabled {
+  opacity: 0.5;
+}
+.range-value {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
 }
 .checkbox {
   flex-direction: row;

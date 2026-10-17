@@ -12,10 +12,11 @@ import MemberList from './MemberList.jsx';
 import ChannelModal from './ChannelModal.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ScreenPicker from './ScreenPicker.jsx';
+import VolumeContextMenu from './VolumeContextMenu.jsx';
 
 const byId = (list) => Object.fromEntries(list.map((u) => [u.id, u]));
 
-export default function Shell({ onLogout }) {
+export default function Shell({ onLogout, onSessionConflict }) {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
   const [me, setMe] = useState(null);
@@ -30,6 +31,7 @@ export default function Shell({ onLogout }) {
   const [modal, setModal] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [showMembers, setShowMembers] = useState(true);
+  const [volumeMenu, setVolumeMenu] = useState(null);
   const [settings, updateSettings] = useSettings();
 
   const notify = useCallback((text) => {
@@ -41,7 +43,22 @@ export default function Shell({ onLogout }) {
   const voice = useVoice({ socket, settings, updateSettings, notify });
 
   const refs = useRef({});
-  refs.current = { me, activeId, settings, onLogout };
+  refs.current = { me, activeId, settings, onLogout, onSessionConflict };
+
+  const openVolumeMenu = useCallback((event, key, name, source) => {
+    event.preventDefault();
+    const width = 244;
+    const height = 132;
+    setVolumeMenu({
+      key,
+      name,
+      source,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
+    });
+  }, []);
+
+  const closeVolumeMenu = useCallback(() => setVolumeMenu(null), []);
 
   useEffect(() => {
     const s = io({ auth: { token: getToken() } });
@@ -51,6 +68,9 @@ export default function Shell({ onLogout }) {
     s.on('disconnect', () => setConnected(false));
     s.on('connect_error', (err) => {
       if (err.message === 'unauthorized') refs.current.onLogout();
+      else if (err.message === 'already_connected') {
+        refs.current.onSessionConflict?.('Este usuário já está logado em outro dispositivo. Desconecte a outra sessão e tente novamente.');
+      }
     });
     s.on('init', (d) => {
       setMe(d.me);
@@ -169,6 +189,7 @@ export default function Shell({ onLogout }) {
           voiceStates={voiceStates}
           volumes={settings.volumes}
           setVolume={voice.setVolume}
+          openVolumeMenu={openVolumeMenu}
           voice={voiceControls}
           voiceChannel={voiceChannel}
           onSelect={selectChannel}
@@ -203,6 +224,7 @@ export default function Shell({ onLogout }) {
               users={users}
               volumes={settings.volumes}
               notify={notify}
+              openVolumeMenu={openVolumeMenu}
             />
           )}
         </main>
@@ -211,6 +233,15 @@ export default function Shell({ onLogout }) {
       </div>
 
       <VoiceAudio deafened={voice.deafened} volumes={settings.volumes} />
+      {volumeMenu && (
+        <VolumeContextMenu
+          menu={volumeMenu}
+          volume={settings.volumes?.[volumeMenu.key] ?? 1}
+          onVolumeChange={(value) => voice.setVolume(volumeMenu.key, value)}
+          onToggleMute={() => voice.toggleVolumeMute(volumeMenu.key)}
+          onClose={closeVolumeMenu}
+        />
+      )}
 
       {(modal?.type === 'create' || modal?.type === 'rename') && (
         <ChannelModal

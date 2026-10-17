@@ -6,9 +6,9 @@ Um mini Discord para você e seus amigos: login individual, salas de texto e de 
 
 - **Contas com usuário e senha** (senhas guardadas com hash scrypt). Só entra quem tiver o **código de convite**. A primeira conta criada vira **admin**.
 - **Salas de texto**: histórico salvo, "fulano está digitando…", links clicáveis e pré-visualização de imagens por link. Dá para apagar suas mensagens.
-- **Salas de voz**: microfone, mutar, ensurdecer, câmera, compartilhamento de tela com áudio, indicador de quem está falando, volume individual do microfone por pessoa na lista da sala e janela flutuante para transmissões de tela.
+- **Salas de voz**: microfone, mutar, ensurdecer, câmera, compartilhamento de tela com áudio, indicador de quem está falando, volume individual do microfone e da transmissão (clique direito no participante ou na tela), além de janela flutuante para transmissões.
 - **Criar, renomear e apagar salas**. Quem criou a sala ou o admin pode mexer nela.
-- **Configurações**: nome de exibição, cor, troca de senha, escolha de microfone, câmera e saída de áudio, supressão de ruído, cancelamento de eco e teste de microfone.
+- **Configurações**: nome de exibição, cor, troca de senha, escolha de microfone, câmera e saída de áudio, supressão de ruído, cancelamento de eco, ganho/sensibilidade e gate de ruído ajustável para o microfone, além de teste de áudio processado.
 - **App desktop (Windows)** com seletor de tela/janela e captura do **áudio do computador**.
 - **Painel Concord Server (Windows)** para ligar e desligar o servidor sem abrir uma janela de console.
 
@@ -24,6 +24,7 @@ Um mini Discord para você e seus amigos: login individual, salas de texto e de 
 - `client/`: React + Vite + LiveKit.
 - `desktop/`: Electron.
 - `livekit/`: servidor de mídia LiveKit, que o `npm start` inicia sozinho.
+- Cada conta permite apenas uma conexão ativa por vez; uma nova tentativa de login é recusada enquanto a sessão atual estiver conectada.
 
 ---
 

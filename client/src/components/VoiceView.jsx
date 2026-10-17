@@ -42,7 +42,7 @@ export function VoiceAudio({ deafened, volumes }) {
   );
 }
 
-export default function VoiceView({ channel, voice, members, users, volumes, notify }) {
+export default function VoiceView({ channel, voice, members, users, volumes, notify, openVolumeMenu }) {
   const inThis = voice.channelId === channel.id;
 
   if (!inThis) {
@@ -78,7 +78,7 @@ export default function VoiceView({ channel, voice, members, users, volumes, not
         <span className="title">{channel.name}</span>
         {voice.status !== 'connected' && <span className="muted small">{voice.status === 'reconnecting' ? 'Reconectando…' : 'Conectando…'}</span>}
       </header>
-      {voice.status === 'connecting' ? <div className="voice-lobby muted">Conectando…</div> : <Stage users={users} volumes={volumes} voice={voice} notify={notify} />}
+      {voice.status === 'connecting' ? <div className="voice-lobby muted">Conectando…</div> : <Stage users={users} volumes={volumes} voice={voice} notify={notify} openVolumeMenu={openVolumeMenu} />}
       <AudioUnlock />
       <div className="voice-controls">
         <button className={`round-btn${voice.muted || voice.deafened ? ' off' : ''}`} title={voice.muted ? 'Desmutar' : 'Mutar'} onClick={voice.toggleMute}>
@@ -114,7 +114,7 @@ function AudioUnlock() {
 
 const keyOf = (t) => `${t.participant.identity}:${t.source}`;
 
-function Stage({ users, volumes, voice, notify }) {
+function Stage({ users, volumes, voice, notify, openVolumeMenu }) {
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -147,6 +147,7 @@ function Stage({ users, volumes, voice, notify }) {
       volumes={volumes}
       setVolume={voice.setVolume}
       notify={notify}
+      openVolumeMenu={openVolumeMenu}
     />
   );
 
@@ -167,7 +168,7 @@ function Stage({ users, volumes, voice, notify }) {
   );
 }
 
-function Tile({ trackRef, user, className = '', onClick, volumes, setVolume, notify }) {
+function Tile({ trackRef, user, className = '', onClick, volumes, setVolume, notify, openVolumeMenu }) {
   const ref = useRef(null);
   const participant = trackRef.participant;
   const isScreen = trackRef.source === Track.Source.ScreenShare;
@@ -204,11 +205,17 @@ function Tile({ trackRef, user, className = '', onClick, volumes, setVolume, not
     }
   };
 
+  const showVolumeMenu = (event) => {
+    if (participant.isLocal) return;
+    openVolumeMenu(event, volumeKey, name, isScreen ? 'screen' : 'mic');
+  };
+
   return (
     <div
       ref={ref}
       className={`tile ${className}${speaking && !isScreen && !micMuted ? ' speaking' : ''}${isScreen ? ' screen' : ''}`}
       onClick={onClick}
+      onContextMenu={showVolumeMenu}
     >
       {hasVideo ? (
         <VideoTrack trackRef={trackRef} className={participant.isLocal && !isScreen ? 'mirror' : ''} style={{ objectFit: isScreen ? 'contain' : 'cover' }} />

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
+import { createMicAudioProcessor } from '../audio/micProcessor.js';
 import Modal from './Modal.jsx';
 
 const COLORS = ['#5865f2', '#eb459e', '#57f287', '#fee75c', '#ed4245', '#f47b67', '#3ba55c', '#faa61a', '#9b59b6', '#1abc9c', '#e67e22', '#95a5a6'];
@@ -26,7 +27,7 @@ export default function SettingsModal({ me, settings, updateSettings, voice, onL
         </nav>
         <div className="settings-content">
           {tab === 'account' && <AccountTab me={me} notify={notify} />}
-          {tab === 'voice' && <VoiceTab settings={settings} updateSettings={updateSettings} voice={voice} />}
+          {tab === 'voice' && <VoiceTab settings={settings} updateSettings={updateSettings} voice={voice} notify={notify} />}
           {tab === 'app' && (
             <section>
               <h3>Notificações</h3>
@@ -119,7 +120,7 @@ function AccountTab({ me, notify }) {
   );
 }
 
-function VoiceTab({ settings, updateSettings, voice }) {
+function VoiceTab({ settings, updateSettings, voice, notify }) {
   const [devices, setDevices] = useState([]);
 
   const refresh = () =>
@@ -166,6 +167,11 @@ function VoiceTab({ settings, updateSettings, voice }) {
     setTimeout(voice.restartMic, 0);
   };
 
+  const setMicProcessing = (patch) => {
+    updateSettings(patch);
+    void voice.updateMicProcessing({ ...settings, ...patch });
+  };
+
   return (
     <>
       <section>
@@ -178,10 +184,43 @@ function VoiceTab({ settings, updateSettings, voice }) {
         {select('audioinput', 'Microfone', settings.micId)}
         {select('audiooutput', 'Saída de áudio', settings.outId)}
         {select('videoinput', 'Câmera', settings.camId)}
-        <MicTest settings={settings} />
+        <MicTest settings={settings} notify={notify} />
       </section>
       <section>
         <h3>Processamento de voz</h3>
+        <label className="settings-range">
+          Sensibilidade do microfone
+          <span className="range-value">{settings.micSensitivity}%</span>
+          <input
+            type="range"
+            min={0}
+            max={200}
+            step={5}
+            value={settings.micSensitivity}
+            onChange={(event) => setMicProcessing({ micSensitivity: Number(event.target.value) })}
+          />
+          <small className="muted">Ajusta o ganho do microfone antes de enviar sua voz.</small>
+        </label>
+        <Toggle
+          label="Gate de ruído do microfone"
+          hint="Reduz o sinal quando o nível do microfone fica abaixo do corte."
+          checked={settings.micGateEnabled}
+          onChange={(v) => setMicProcessing({ micGateEnabled: v })}
+        />
+        <label className={`settings-range${settings.micGateEnabled ? '' : ' disabled'}`}>
+          Corte do gate
+          <span className="range-value">{settings.micGateCut} dB</span>
+          <input
+            type="range"
+            min={-60}
+            max={-20}
+            step={1}
+            value={settings.micGateCut}
+            disabled={!settings.micGateEnabled}
+            onChange={(event) => setMicProcessing({ micGateCut: Number(event.target.value) })}
+          />
+          <small className="muted">O áudio abaixo desse nível é atenuado. Um corte mais baixo preserva sons mais suaves.</small>
+        </label>
         <Toggle
           label="Supressão de ruído"
           hint="Reduz barulhos de fundo (teclado, ventilador)."
@@ -205,7 +244,7 @@ function VoiceTab({ settings, updateSettings, voice }) {
   );
 }
 
-function MicTest({ settings }) {
+function MicTest({ settings, notify }) {
   const [level, setLevel] = useState(null);
   const stop = useRef(null);
 
@@ -227,26 +266,39 @@ function MicTest({ settings }) {
           autoGainControl: settings.autoGainControl,
         },
       });
-      const ctx = new AudioContext();
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      ctx.createMediaStreamSource(stream).connect(analyser);
-      const data = new Float32Array(analyser.fftSize);
-      let raf;
-      const loop = () => {
-        analyser.getFloatTimeDomainData(data);
-        const rms = Math.sqrt(data.reduce((s, x) => s + x * x, 0) / data.length);
-        setLevel(Math.min(1, rms * 4));
-        raf = requestAnimationFrame(loop);
-      };
-      loop();
-      stop.current = () => {
-        cancelAnimationFrame(raf);
-        stream.getTracks().forEach((t) => t.stop());
-        ctx.close();
-      };
-    } catch {
+      let ctx;
+      const processor = createMicAudioProcessor(settings);
+      try {
+        ctx = new AudioContext();
+        await ctx.resume();
+        await processor.init({ track: stream.getAudioTracks()[0], audioContext: ctx });
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        ctx.createMediaStreamSource(new MediaStream([processor.processedTrack])).connect(analyser);
+        const data = new Float32Array(analyser.fftSize);
+        let raf;
+        const loop = () => {
+          analyser.getFloatTimeDomainData(data);
+          const rms = Math.sqrt(data.reduce((s, x) => s + x * x, 0) / data.length);
+          setLevel(Math.min(1, rms * 4));
+          raf = requestAnimationFrame(loop);
+        };
+        loop();
+        stop.current = () => {
+          cancelAnimationFrame(raf);
+          void processor.destroy();
+          stream.getTracks().forEach((t) => t.stop());
+          void ctx.close();
+        };
+      } catch (error) {
+        await processor.destroy();
+        stream.getTracks().forEach((track) => track.stop());
+        if (ctx && ctx.state !== 'closed') await ctx.close();
+        throw error;
+      }
+    } catch (error) {
       setLevel(null);
+      notify(`Não foi possível testar o microfone: ${error.message}`);
     }
   }
 

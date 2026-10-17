@@ -65,6 +65,13 @@ const app = express();
 app.set('trust proxy', true);
 app.use(express.json({ limit: '100kb' }));
 
+/** userId -> active Socket.IO connection IDs */
+const online = new Map();
+/** Prevents simultaneous handshakes for the same account from both being accepted. */
+const pendingConnections = new Set();
+
+const hasActiveConnection = (userId) => online.has(userId) || pendingConnections.has(userId);
+
 function auth(req, res, next) {
   const token = (req.headers.authorization || '').replace(/^Bearer /, '');
   const user = userFromToken(token);
@@ -96,6 +103,9 @@ app.post('/api/login', (req, res) => {
   const row = typeof username === 'string' && typeof password === 'string' ? findUserRow(username) : null;
   if (!row || !verifyPassword(password, row.password_hash)) {
     return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
+  }
+  if (hasActiveConnection(row.id)) {
+    return res.status(409).json({ error: 'Este usuário já está logado em outro dispositivo. Desconecte a outra sessão e tente novamente.' });
   }
   res.json({ token: createSession(row.id), user: publicUser(row) });
 });
@@ -163,8 +173,6 @@ const io = new Server(server, { maxHttpBufferSize: 1e5 });
 
 /** voiceStates: socketId -> { userId, channelId, muted, deafened, video, screen } */
 const voiceStates = new Map();
-/** online: userId -> IDs das conexões Socket.IO abertas */
-const online = new Map();
 
 const allUsers = () => db.prepare('SELECT * FROM users ORDER BY display_name COLLATE NOCASE').all().map(publicUser);
 const allChannels = () => db.prepare('SELECT * FROM channels ORDER BY type DESC, id').all().map(publicChannel);
@@ -190,12 +198,15 @@ const broadcastVoice = () => io.emit('voice:states', voiceSnapshot());
 io.use((socket, next) => {
   const user = userFromToken(socket.handshake.auth?.token);
   if (!user) return next(new Error('unauthorized'));
+  if (hasActiveConnection(user.id)) return next(new Error('already_connected'));
+  pendingConnections.add(user.id);
   socket.data.userId = user.id;
   next();
 });
 
 io.on('connection', (socket) => {
   const userId = socket.data.userId;
+  pendingConnections.delete(userId);
   const me = () => getUser(userId);
   const sockets = online.get(userId) || new Set();
   sockets.add(socket.id);

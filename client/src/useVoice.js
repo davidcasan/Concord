@@ -4,6 +4,7 @@ import { api } from './api.js';
 import { sounds } from './sounds.js';
 import { SCREEN_QUALITIES } from './settings.js';
 import { createSystemAudioTrack, nativeSystemAudioAvailable } from './systemAudio.js';
+import { createMicAudioProcessor } from './audio/micProcessor.js';
 
 const SCREEN_AUDIO_PUBLISH = {
   source: Track.Source.ScreenShareAudio,
@@ -28,6 +29,7 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
 
   const screenTracks = useRef([]);
   const systemAudio = useRef(null);
+  const micAudioContext = useRef(null);
   const leaving = useRef(false);
   const state = useRef({});
   state.current = { channelId, muted, deafened, camera, screen };
@@ -47,18 +49,86 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
     };
   };
 
+  const closeMicAudioContext = useCallback(async () => {
+    const context = micAudioContext.current;
+    micAudioContext.current = null;
+    if (context && context.state !== 'closed') {
+      try {
+        await context.close();
+      } catch (error) {
+        notify(`Não foi possível encerrar o processamento do microfone: ${error.message}`);
+      }
+    }
+  }, [notify]);
+
+  const configureMicProcessor = useCallback(
+    async (track, currentSettings = settingsRef.current) => {
+      const shouldProcess = currentSettings.micSensitivity !== 100 || currentSettings.micGateEnabled;
+      let processor = track.getProcessor();
+
+      if (!shouldProcess) {
+        if (processor) await track.stopProcessor();
+        if (micAudioContext.current) await closeMicAudioContext();
+        return;
+      }
+
+      if (processor?.update) {
+        processor.update(currentSettings);
+        return;
+      }
+
+      const context = new AudioContext();
+      try {
+        await context.resume();
+        track.setAudioContext(context);
+        processor = createMicAudioProcessor(currentSettings);
+        await track.setProcessor(processor, false);
+        micAudioContext.current = context;
+      } catch (error) {
+        if (context.state !== 'closed') {
+          await context.close().catch(() => {});
+        }
+        throw error;
+      }
+    },
+    [closeMicAudioContext],
+  );
+
+  const updateMicProcessing = useCallback(
+    async (nextSettings = settingsRef.current) => {
+      const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+      if (!track) return;
+      try {
+        await configureMicProcessor(track, nextSettings);
+      } catch (error) {
+        notify(`Não foi possível aplicar a sensibilidade/gate do microfone: ${error.message}. O microfone continuará sem esse processamento.`);
+      }
+    },
+    [room, configureMicProcessor, notify],
+  );
+
   const setMic = useCallback(
     async (on) => {
       if (room.state !== 'connected') return;
       try {
-        await room.localParticipant.setMicrophoneEnabled(on, micOptions());
+        const publication = await room.localParticipant.setMicrophoneEnabled(on, micOptions());
+        if (on) {
+          const track = publication?.track || room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+          if (track) {
+            try {
+              await configureMicProcessor(track);
+            } catch (error) {
+              notify(`Não foi possível aplicar a sensibilidade/gate do microfone: ${error.message}. O microfone continuará sem esse processamento.`);
+            }
+          }
+        }
       } catch (err) {
         notify(`Não foi possível usar o microfone: ${err.message}`);
         setMuted(true);
         emit({ muted: true });
       }
     },
-    [room, notify, emit],
+    [room, notify, emit, configureMicProcessor],
   );
 
   const stopScreen = useCallback(async () => {
@@ -93,11 +163,12 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
       leaving.current = true;
       await stopScreen();
       await room.disconnect();
+      await closeMicAudioContext();
       socket?.emit('voice:leave');
       resetLocal();
       if (!silent) play('leave');
     },
-    [room, socket, stopScreen, play],
+    [room, socket, stopScreen, play, closeMicAudioContext],
   );
 
   const join = useCallback(
@@ -122,11 +193,12 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
       } catch (err) {
         leaving.current = true;
         await room.disconnect();
+        await closeMicAudioContext();
         resetLocal();
         notify(`Não foi possível entrar na sala de voz: ${err.message}`);
       }
     },
-    [room, socket, leave, setMic, notify, play],
+    [room, socket, leave, setMic, notify, play, closeMicAudioContext],
   );
 
   const toggleMute = useCallback(() => {
@@ -264,17 +336,39 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
   /** Reaplica supressão de ruído / cancelamento de eco no microfone atual. */
   const restartMic = useCallback(async () => {
     const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-    if (track) await track.restartTrack(micOptions()).catch(() => {});
-  }, [room]);
+    if (!track) return;
+    try {
+      await track.restartTrack(micOptions());
+      await configureMicProcessor(track);
+    } catch (error) {
+      notify(`Não foi possível atualizar o processamento do microfone: ${error.message}`);
+    }
+  }, [room, configureMicProcessor, notify]);
 
   const setVolume = useCallback(
-    (key, value) => updateSettings((prev) => ({ volumes: { ...prev.volumes, [key]: value } })),
+    (key, value) =>
+      updateSettings((prev) => {
+        const currentVolume = prev.volumes?.[key] ?? 1;
+        const lastVolume = value > 0 ? value : currentVolume > 0 ? currentVolume : prev.lastVolumes?.[key] ?? 1;
+        return {
+          volumes: { ...prev.volumes, [key]: value },
+          lastVolumes: { ...prev.lastVolumes, [key]: lastVolume },
+        };
+      }),
     [updateSettings],
+  );
+  const toggleVolumeMute = useCallback(
+    (key) => {
+      const currentVolume = settingsRef.current.volumes?.[key] ?? 1;
+      setVolume(key, currentVolume === 0 ? settingsRef.current.lastVolumes?.[key] ?? 1 : 0);
+    },
+    [setVolume],
   );
 
   useEffect(() => {
     const onDisconnected = () => {
       if (leaving.current) return;
+      void closeMicAudioContext();
       socket?.emit('voice:leave');
       resetLocal();
       notify('Você foi desconectado da sala de voz.');
@@ -305,7 +399,7 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
         .off(RoomEvent.ParticipantDisconnected, onLeave)
         .off(RoomEvent.LocalTrackUnpublished, onLocalUnpublished);
     };
-  }, [room, socket, notify, play, emit]);
+  }, [room, socket, notify, play, emit, closeMicAudioContext]);
 
   // Se o socket reconectar (ex.: servidor reiniciou), avisa de novo em que sala estamos.
   useEffect(() => {
@@ -321,7 +415,12 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
     return () => socket.off('connect', onConnect);
   }, [socket, room]);
 
-  useEffect(() => () => void room.disconnect(), [room]);
+  useEffect(
+    () => () => {
+      void room.disconnect().finally(() => closeMicAudioContext());
+    },
+    [room, closeMicAudioContext],
+  );
 
   return {
     room,
@@ -340,6 +439,8 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
     stopScreen,
     setDevice,
     restartMic,
+    updateMicProcessing,
     setVolume,
+    toggleVolumeMute,
   };
 }

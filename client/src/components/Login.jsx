@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, notice = '' }) {
   const [mode, setMode] = useState('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [inviteRequired, setInviteRequired] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(notice);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
