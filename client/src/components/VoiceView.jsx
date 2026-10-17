@@ -11,6 +11,7 @@ import {
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import {
+  AppWindow,
   Headphones,
   HeadphoneOff,
   Maximize,
@@ -234,7 +235,22 @@ function Tile({ trackRef, user, className = '', screens = [], remoteScreens = []
       onClick={onClick}
       onContextMenu={showVolumeMenu}
     >
-      {hasVideo ? (
+      {isScreen && popupOpen ? (
+        // Em janela flutuante o vídeo não é desenhado aqui (poupa processador e placa de vídeo).
+        // A transmissão continua assinada pelo StreamPopups, então a janela segue tocando.
+        <div className="tile-popped">
+          <AppWindow size={28} />
+          <span>Em janela flutuante</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              closeStreamPopup(screenSid(trackRef));
+            }}
+          >
+            Trazer de volta
+          </button>
+        </div>
+      ) : hasVideo ? (
         <VideoTrack trackRef={trackRef} className={participant.isLocal && !isScreen ? 'mirror' : ''} style={{ objectFit: isScreen ? 'contain' : 'cover' }} />
       ) : (
         <div className="tile-avatar">
@@ -278,7 +294,7 @@ function Tile({ trackRef, user, className = '', screens = [], remoteScreens = []
             )}
           </div>
         )}
-        {hasVideo && (
+        {hasVideo && !(isScreen && popupOpen) && (
           <button title="Tela cheia" onClick={fullscreen}>
             <Maximize size={16} />
           </button>
