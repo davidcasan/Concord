@@ -83,6 +83,10 @@ internal sealed class ConcordServerManager : Form
     private readonly Label _status;
     private readonly TextBox _inviteCode;
     private readonly RichTextBox _logView;
+    private readonly NotifyIcon _tray;
+    private readonly ToolStripMenuItem _trayStart;
+    private readonly ToolStripMenuItem _trayStop;
+    private bool _trayHintShown;
     private readonly Button _startButton;
     private readonly Button _stopButton;
     private readonly System.Windows.Forms.Timer _timer;
@@ -309,7 +313,48 @@ internal sealed class ConcordServerManager : Form
         _timer.Tick += delegate { RefreshStatus(); };
         _timer.Start();
         Load += delegate { AppendLog("Painel Concord Server pronto."); };
+        // O servidor liga sozinho ao abrir o painel.
+        Shown += delegate { StartServer(); };
         FormClosing += delegate { StopServer(); };
+
+        // Minimizar manda o painel para a bandeja do sistema; o servidor continua ligado.
+        ContextMenuStrip trayMenu = new ContextMenuStrip();
+        trayMenu.Items.Add("Abrir painel", null, delegate { RestoreFromTray(); });
+        trayMenu.Items.Add(new ToolStripSeparator());
+        _trayStart = new ToolStripMenuItem("Iniciar servidor", null, delegate { StartServer(); });
+        _trayStop = new ToolStripMenuItem("Desligar servidor", null, delegate { StopServer(); });
+        trayMenu.Items.Add(_trayStart);
+        trayMenu.Items.Add(_trayStop);
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add("Sair (desliga o servidor)", null, delegate { Close(); });
+
+        _tray = new NotifyIcon();
+        _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+        _tray.Text = "Concord Server";
+        _tray.ContextMenuStrip = trayMenu;
+        _tray.DoubleClick += delegate { RestoreFromTray(); };
+        _tray.Visible = true;
+    }
+
+    private void HideToTray()
+    {
+        Hide();
+        if (_trayHintShown) return;
+        _trayHintShown = true;
+        _tray.ShowBalloonTip(4000, "Concord Server", "O servidor continua ligado. Clique no icone para abrir o painel.", ToolTipIcon.Info);
+    }
+
+    private void RestoreFromTray()
+    {
+        Show();
+        WindowState = FormWindowState.Normal;
+        Activate();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (WindowState == FormWindowState.Minimized) HideToTray();
     }
 
     private string ReadInviteCode()
@@ -510,6 +555,9 @@ internal sealed class ConcordServerManager : Form
         _status.ForeColor = running ? Color.FromArgb(93, 225, 172) : Color.FromArgb(161, 174, 190);
         _startButton.Enabled = !running;
         _stopButton.Enabled = running;
+        _trayStart.Enabled = !running;
+        _trayStop.Enabled = running;
+        _tray.Text = running ? "Concord Server - ligado" : "Concord Server - desligado";
         if (!running && _server != null && _server.HasExited)
         {
             _server.Dispose();
@@ -561,6 +609,8 @@ internal sealed class ConcordServerManager : Form
         StopServer();
         _timer.Stop();
         CloseLogFile();
+        _tray.Visible = false;
+        _tray.Dispose();
         base.OnFormClosed(e);
     }
 
@@ -572,7 +622,7 @@ internal sealed class ConcordServerManager : Form
         {
             if (!created)
             {
-                MessageBox.Show("O Concord Server ja esta aberto.", "Concord Server", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("O Concord Server ja esta aberto. Procure o icone dele na bandeja do sistema (perto do relogio).", "Concord Server", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
             Application.EnableVisualStyles();
