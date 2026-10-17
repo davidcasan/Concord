@@ -1,5 +1,5 @@
 // Transforma o PCM vindo do capturador nativo (app desktop) em uma faixa de áudio WebRTC.
-// O capturador exclui o som do próprio Minicord, então os amigos não ouvem a própria voz de volta.
+// O capturador pode excluir o som do próprio Concord (todo o PC) ou capturar só um aplicativo.
 
 const RATE = 48000;
 
@@ -56,8 +56,12 @@ registerProcessor('minicord-pcm', MinicordPcm);
 
 export const nativeSystemAudioAvailable = () => typeof window !== 'undefined' && !!window.minicordDesktop?.startSystemAudio;
 
-/** Inicia a captura e devolve { track, stop }. Lança erro se o Windows não suportar. */
-export async function createSystemAudioTrack({ onEnded } = {}) {
+/**
+ * Inicia a captura e devolve { track, stop, switchSource }. Lança erro se o Windows não suportar.
+ * `source`: { type: 'system' } | { type: 'app', pid } | { type: 'window', windowId }.
+ * `switchSource` troca a fonte mantendo a mesma track publicada.
+ */
+export async function createSystemAudioTrack({ source = { type: 'system' }, onEnded } = {}) {
   const api = window.minicordDesktop;
   const ctx = new AudioContext({ sampleRate: RATE, latencyHint: 'interactive' });
   const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
@@ -95,11 +99,12 @@ export async function createSystemAudioTrack({ onEnded } = {}) {
   });
 
   try {
-    await api.startSystemAudio();
+    await api.startSystemAudio(source);
     await ctx.resume();
   } catch (err) {
     stop();
     throw err;
   }
-  return { track, stop };
+  const switchSource = (next) => api.startSystemAudio(next);
+  return { track, stop, switchSource };
 }

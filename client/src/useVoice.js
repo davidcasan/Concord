@@ -5,6 +5,9 @@ import { sounds } from './sounds.js';
 import { SCREEN_QUALITIES } from './settings.js';
 import { createSystemAudioTrack, nativeSystemAudioAvailable } from './systemAudio.js';
 import { createMicAudioProcessor } from './audio/micProcessor.js';
+import { RNNOISE_SAMPLE_RATE } from './audio/rnnoise.js';
+
+const NO_SCREEN_AUDIO = { type: 'none' };
 
 const SCREEN_AUDIO_PUBLISH = {
   source: Track.Source.ScreenShareAudio,
@@ -26,6 +29,8 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
   const [deafened, setDeafened] = useState(false);
   const [camera, setCamera] = useState(false);
   const [screen, setScreen] = useState(false);
+  const [screenAudio, setScreenAudioState] = useState(NO_SCREEN_AUDIO); // fonte do áudio da transmissão
+  const [screenSource, setScreenSource] = useState(null); // { id, name } do vídeo compartilhado
 
   const screenTracks = useRef([]);
   const systemAudio = useRef(null);
@@ -43,7 +48,8 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
     const s = settingsRef.current;
     return {
       deviceId: s.micId || undefined,
-      noiseSuppression: s.noiseSuppression,
+      // Com o RNNoise ligado, o filtro do navegador fica desligado para não processar duas vezes.
+      noiseSuppression: s.noiseEngine === 'browser',
       echoCancellation: s.echoCancellation,
       autoGainControl: s.autoGainControl,
     };
@@ -63,7 +69,8 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
 
   const configureMicProcessor = useCallback(
     async (track, currentSettings = settingsRef.current) => {
-      const shouldProcess = currentSettings.micSensitivity !== 100 || currentSettings.micGateEnabled;
+      const shouldProcess =
+        currentSettings.micSensitivity !== 100 || currentSettings.micGateEnabled || currentSettings.noiseEngine === 'rnnoise';
       let processor = track.getProcessor();
 
       if (!shouldProcess) {
@@ -73,17 +80,20 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
       }
 
       if (processor?.update) {
-        processor.update(currentSettings);
+        await processor.update(currentSettings);
         return;
       }
 
-      const context = new AudioContext();
+      const context = new AudioContext({ sampleRate: RNNOISE_SAMPLE_RATE });
       try {
         await context.resume();
         track.setAudioContext(context);
         processor = createMicAudioProcessor(currentSettings);
         await track.setProcessor(processor, false);
         micAudioContext.current = context;
+        if (processor.noiseError) {
+          notify(`Não foi possível ligar a redução de ruído: ${processor.noiseError.message}. O microfone continuará sem ela.`);
+        }
       } catch (error) {
         if (context.state !== 'closed') {
           await context.close().catch(() => {});
@@ -91,7 +101,7 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
         throw error;
       }
     },
-    [closeMicAudioContext],
+    [closeMicAudioContext, notify],
   );
 
   const updateMicProcessing = useCallback(
@@ -143,14 +153,77 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
         track.stop?.();
       }
     }
+    setScreenAudioState(NO_SCREEN_AUDIO);
+    setScreenSource(null);
     if (tracks.length) {
       setScreen(false);
       emit({ screen: false });
     }
   }, [room, emit]);
 
+  /** Remove só o áudio da transmissão; o vídeo continua no ar. */
+  const removeScreenAudio = useCallback(async () => {
+    systemAudio.current?.stop();
+    systemAudio.current = null;
+    const audioTracks = screenTracks.current.filter((t) => t.source === Track.Source.ScreenShareAudio);
+    screenTracks.current = screenTracks.current.filter((t) => !audioTracks.includes(t));
+    for (const track of audioTracks) {
+      try {
+        await room.localParticipant.unpublishTrack(track, true);
+      } catch {
+        track.stop?.();
+      }
+    }
+  }, [room]);
+
+  /** Captura (via capturador nativo) a fonte de áudio pedida e publica como áudio da transmissão. */
+  const addScreenAudio = useCallback(
+    async (source) => {
+      let capture;
+      capture = await createSystemAudioTrack({
+        source,
+        onEnded: () => {
+          if (systemAudio.current !== capture) return;
+          notify(`O áudio de ${source.name || 'a fonte escolhida'} terminou (o aplicativo foi fechado?). A transmissão continua sem áudio.`);
+          void removeScreenAudio().then(() => setScreenAudioState(NO_SCREEN_AUDIO));
+        },
+      });
+      systemAudio.current = capture;
+      try {
+        const audioPub = await room.localParticipant.publishTrack(capture.track, SCREEN_AUDIO_PUBLISH);
+        screenTracks.current.push(audioPub.track);
+      } catch (error) {
+        capture.stop();
+        systemAudio.current = null;
+        throw error;
+      }
+    },
+    [room, notify, removeScreenAudio],
+  );
+
+  /**
+   * Troca a fonte do áudio com a transmissão no ar, sem mexer no vídeo.
+   * `source`: { type: 'none' } | { type: 'system' } | { type: 'window', windowId } | { type: 'app', pid }.
+   */
+  const setScreenAudio = useCallback(
+    async (source) => {
+      if (!screenTracks.current.length) return;
+      try {
+        if (source.type === 'none') await removeScreenAudio();
+        else if (systemAudio.current) await systemAudio.current.switchSource(source);
+        else await addScreenAudio(source);
+        setScreenAudioState(source);
+      } catch (err) {
+        notify(`Não foi possível trocar o áudio da transmissão: ${err.message}`);
+      }
+    },
+    [notify, removeScreenAudio, addScreenAudio],
+  );
+
   const resetLocal = () => {
     screenTracks.current = [];
+    setScreenAudioState(NO_SCREEN_AUDIO);
+    setScreenSource(null);
     setChannelId(null);
     setStatus('idle');
     setCamera(false);
@@ -238,13 +311,15 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
 
   /** Inicia o compartilhamento. No app desktop, `sourceId` vem do seletor de telas/janelas. */
   const startScreen = useCallback(
-    async ({ sourceId, audio }) => {
+    async ({ sourceId, sourceName, audio }) => {
       if (room.state !== 'connected') return;
       await stopScreen();
       const q = SCREEN_QUALITIES[settingsRef.current.screenQuality] || SCREEN_QUALITIES['1080p30'];
-      // No app desktop, o áudio vem do capturador nativo (que exclui o som do Minicord), não da tela.
-      const nativeAudio = audio && nativeSystemAudioAvailable();
-      const browserAudio = audio && !nativeAudio;
+      // No app desktop, o áudio vem do capturador nativo, escolhido independente do vídeo
+      // (todo o PC sem o som do Concord, ou só de um aplicativo/janela). `audio` é a fonte escolhida.
+      const audioSource = audio && typeof audio === 'object' ? audio : audio ? { type: 'system' } : NO_SCREEN_AUDIO;
+      const nativeAudio = audioSource.type !== 'none' && nativeSystemAudioAvailable();
+      const browserAudio = audioSource.type !== 'none' && !nativeAudio;
       let stream;
       try {
         if (window.minicordDesktop) await window.minicordDesktop.selectSource(sourceId, browserAudio);
@@ -286,16 +361,13 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
         });
         screenTracks.current = [videoPub.track];
 
+        setScreenSource(sourceId ? { id: sourceId, name: sourceName || '' } : null);
         if (nativeAudio) {
           try {
-            const capture = await createSystemAudioTrack();
-            systemAudio.current = capture;
-            const audioPub = await room.localParticipant.publishTrack(capture.track, SCREEN_AUDIO_PUBLISH);
-            screenTracks.current.push(audioPub.track);
+            await addScreenAudio(audioSource);
+            setScreenAudioState(audioSource);
           } catch (err) {
-            systemAudio.current?.stop();
-            systemAudio.current = null;
-            notify(`Não foi possível capturar o áudio do computador (${err.message}). Compartilhando só o vídeo.`);
+            notify(`Não foi possível capturar o áudio escolhido (${err.message}). Compartilhando só o vídeo.`);
           }
         } else {
           const [audioTrack] = stream.getAudioTracks();
@@ -315,7 +387,7 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
         notify(`Falha ao transmitir a tela: ${err.message}`);
       }
     },
-    [room, stopScreen, emit, notify],
+    [room, stopScreen, emit, notify, addScreenAudio],
   );
 
   const setDevice = useCallback(
@@ -430,6 +502,9 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
     deafened,
     camera,
     screen,
+    screenAudio,
+    screenSource,
+    setScreenAudio,
     join,
     leave,
     toggleMute,

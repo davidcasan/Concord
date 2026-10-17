@@ -204,7 +204,8 @@ app.whenReady().then(() => {
     pendingShare = { id, audio: !!audio };
   });
 
-  ipcMain.handle('minicord:system-audio-start', (event) => startSystemAudio(event.sender));
+  ipcMain.handle('minicord:system-audio-start', (event, source) => startSystemAudio(event.sender, source));
+  ipcMain.handle('minicord:list-audio-apps', () => listAudioApps());
   ipcMain.handle('minicord:system-audio-stop', () => stopSystemAudio());
 
   ipcMain.handle('minicord:save-server', (_e, url) => {
@@ -222,27 +223,50 @@ app.whenReady().then(() => {
   createWindow();
 });
 
-// ---------- Áudio do sistema sem eco ----------
-// O minicord-audio.exe captura todo o som do PC EXCETO o deste processo e dos filhos dele
-// (onde toca a voz dos amigos), então ninguém se ouve de volta durante o compartilhamento.
+// ---------- Áudio da transmissão ----------
+// O minicord-audio.exe captura, a pedido, (a) todo o som do PC EXCETO o deste processo e dos filhos dele
+// (onde toca a voz dos amigos, então ninguém se ouve de volta) ou (b) só o som de um aplicativo.
+// A fonte pode ser trocada com a transmissão no ar: o novo capturador sobe primeiro e só então o antigo cai.
 let audioProc = null;
 
 const helperPath = () =>
   app.isPackaged ? path.join(process.resourcesPath, 'minicord-audio.exe') : path.join(__dirname, 'native', 'minicord-audio.exe');
 
-function stopSystemAudio() {
-  if (audioProc) {
-    audioProc.kill();
-    audioProc = null;
+function captureArgs(source) {
+  switch (source?.type) {
+    case 'app': {
+      const pid = Number(source.pid);
+      if (!Number.isInteger(pid) || pid <= 0) throw new Error('Aplicativo inválido.');
+      return ['include', String(pid)];
+    }
+    case 'window': {
+      const hwnd = /^window:(\d+):/.exec(String(source.windowId))?.[1];
+      if (!hwnd) throw new Error('Janela inválida.');
+      return ['include-window', hwnd];
+    }
+    default:
+      return ['exclude', String(process.pid)];
   }
 }
 
-function startSystemAudio(sender) {
-  stopSystemAudio();
+function stopSystemAudio() {
+  const proc = audioProc;
+  audioProc = null; // antes do kill, para o 'exit' não ser tratado como fim inesperado
+  proc?.kill();
+}
+
+function startSystemAudio(sender, source) {
   return new Promise((resolve, reject) => {
     if (process.platform !== 'win32') return reject(new Error('Disponível só no Windows.'));
-    const proc = spawn(helperPath(), [String(process.pid)], { windowsHide: true });
-    audioProc = proc;
+    let args;
+    try {
+      args = captureArgs(source);
+    } catch (error) {
+      return reject(error);
+    }
+    const proc = spawn(helperPath(), args, { windowsHide: true });
+    // Primeira captura: já é a atual. Troca: continua a antiga até a nova confirmar que iniciou.
+    if (!audioProc) audioProc = proc;
     let started = false;
     let errors = '';
     let leftover = Buffer.alloc(0);
@@ -251,25 +275,71 @@ function startSystemAudio(sender) {
       const text = d.toString();
       if (!started && text.startsWith('ok')) {
         started = true;
+        const previous = audioProc;
+        audioProc = proc;
+        if (previous && previous !== proc) previous.kill();
         resolve();
       } else {
         errors += text;
       }
     });
-    // PCM float32 estéreo: só repassa quadros completos (8 bytes cada).
+    // PCM float32 estéreo: só repassa quadros completos (8 bytes cada), e só da captura atual.
     proc.stdout.on('data', (d) => {
+      if (audioProc !== proc) return;
       const buf = leftover.length ? Buffer.concat([leftover, d]) : d;
       const usable = buf.length - (buf.length % 8);
       leftover = Buffer.from(buf.subarray(usable));
       if (usable && !sender.isDestroyed()) sender.send('minicord:system-audio-data', buf.subarray(0, usable));
     });
     proc.on('error', (err) => {
+      if (audioProc === proc) audioProc = null;
       if (!started) reject(err);
     });
     proc.on('exit', (code) => {
-      if (audioProc === proc) audioProc = null;
+      const wasCurrent = audioProc === proc;
+      if (wasCurrent) audioProc = null;
       if (!started) reject(new Error(errors.trim() || `o capturador encerrou (código ${code})`));
-      else if (!sender.isDestroyed()) sender.send('minicord:system-audio-ended');
+      else if (wasCurrent && !sender.isDestroyed()) sender.send('minicord:system-audio-ended');
+    });
+  });
+}
+
+// Aplicativos com sessão de áudio ativa no dispositivo padrão (para o usuário escolher o que transmitir).
+function listAudioApps() {
+  return new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') return resolve([]);
+    const proc = spawn(helperPath(), ['list'], { windowsHide: true });
+    let out = '';
+    let errors = '';
+    const timer = setTimeout(() => proc.kill(), 5000);
+    proc.stdout.on('data', (d) => (out += d));
+    proc.stderr.on('data', (d) => (errors += d));
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    proc.on('exit', async (code) => {
+      clearTimeout(timer);
+      if (code !== 0) return reject(new Error(errors.trim() || `falha ao listar aplicativos (código ${code})`));
+      try {
+        const apps = JSON.parse(out).filter((a) => a.pid !== process.pid); // o próprio Concord fica de fora
+        resolve(
+          await Promise.all(
+            apps.map(async (a) => {
+              const icon = await app.getFileIcon(a.exe, { size: 'normal' }).catch(() => null);
+              const base = path.basename(a.exe, path.extname(a.exe));
+              return {
+                pid: a.pid,
+                name: base.charAt(0).toUpperCase() + base.slice(1),
+                active: a.active,
+                icon: icon && !icon.isEmpty() ? icon.toDataURL() : null,
+              };
+            }),
+          ),
+        );
+      } catch (error) {
+        reject(error);
+      }
     });
   });
 }

@@ -1305,6 +1305,49 @@ h3 {
   width: 16px;
   height: 16px;
 }
+.source.selected {
+  border-color: var(--accent);
+}
+.audio-sources {
+  margin-bottom: 12px;
+}
+.audio-sources-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.audio-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 24vh;
+  overflow-y: auto;
+}
+.audio-source {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-1);
+  border: 2px solid transparent;
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: var(--text);
+  text-align: left;
+}
+.audio-source:hover {
+  border-color: var(--bg-active);
+}
+.audio-source.selected {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+.audio-source-name {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .share-options {
   display: flex;
   gap: 24px;

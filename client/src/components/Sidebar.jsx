@@ -11,6 +11,7 @@ import {
   Plus,
   ScreenShare,
   ScreenShareOff,
+  AudioLines,
   Settings,
   Trash,
   Video,
@@ -147,6 +148,11 @@ export default function Sidebar({
             >
               {voice.screen ? <ScreenShareOff size={18} /> : <ScreenShare size={18} />}
             </button>
+            {voice.screen && window.minicordDesktop?.listAudioApps && (
+              <button className="icon-btn" title="Áudio da transmissão" onClick={voice.openScreenAudio}>
+                <AudioLines size={18} />
+              </button>
+            )}
             <button className="icon-btn danger" title="Desconectar" onClick={() => voice.leave()}>
               <PhoneOff size={18} />
             </button>

@@ -8,7 +8,7 @@ Um mini Discord para você e seus amigos: login individual, salas de texto e de 
 - **Salas de texto**: histórico salvo, "fulano está digitando…", links clicáveis e pré-visualização de imagens por link. Dá para apagar suas mensagens.
 - **Salas de voz**: microfone, mutar, ensurdecer, câmera, compartilhamento de tela com áudio, indicador de quem está falando, volume individual do microfone e da transmissão (clique direito no participante ou na tela), além de janela flutuante para transmissões.
 - **Criar, renomear e apagar salas**. Quem criou a sala ou o admin pode mexer nela.
-- **Configurações**: nome de exibição, cor, troca de senha, escolha de microfone, câmera e saída de áudio, supressão de ruído, cancelamento de eco, ganho/sensibilidade e gate de ruído ajustável para o microfone, além de teste de áudio processado.
+- **Configurações**: nome de exibição, cor, troca de senha, escolha de microfone, câmera e saída de áudio, redução de ruído (avançada com RNNoise, que roda no seu computador, padrão do navegador ou desligada), cancelamento de eco, ganho/sensibilidade e gate de ruído ajustável para o microfone, além de teste de áudio processado.
 - **App desktop (Windows)** com seletor de tela/janela e captura do **áudio do computador**.
 - **Painel Concord Server (Windows)** para ligar e desligar o servidor sem abrir uma janela de console.
 
@@ -148,14 +148,20 @@ O app desktop já libera microfone e câmera nesse endereço. Pelo navegador nã
 
 Depois de mudar as chaves do LiveKit local, rode `node scripts/setup.mjs` para atualizar o `livekit/livekit.yaml`.
 
-## Áudio da tela sem eco
+## Áudio da transmissão
 
-Ao compartilhar a tela com áudio, o Concord envia **todo o som do computador, menos o do próprio aplicativo**. A voz dos amigos fica de fora, então ninguém se ouve de volta.
+No app desktop, o áudio da transmissão é **independente do vídeo**. Ao compartilhar (e depois, com a transmissão no ar, pelo botão de áudio na barra de voz) você escolhe a fonte:
+
+- **Sem áudio**;
+- **Todo o áudio do computador**, menos o do próprio Concord. A voz dos amigos fica de fora, então ninguém se ouve de volta;
+- **Só um aplicativo** (um jogo, o navegador…), da lista de aplicativos com áudio aberto ou o da janela compartilhada.
+
+A troca de fonte durante a transmissão não interrompe o vídeo. Se o aplicativo escolhido for fechado, a transmissão segue sem áudio. Navegadores têm um aplicativo só (todas as abas e janelas do Chrome contam como um).
 
 - **App desktop**: usa o `desktop/native/minicord-audio.exe`, um capturador pequeno em C++. Ele usa a API de *Process Loopback* do Windows no modo "excluir processo", a mesma técnica do Discord. Funciona no Windows 11 e nas versões recentes do Windows 10. Se o Windows não suportar, o Concord avisa e compartilha só o vídeo, sem nunca mandar áudio com eco.
-- **Navegador (Chrome/Edge)**: o Concord pede ao navegador para excluir o próprio som (`restrictOwnAudio`). O áudio só vai se você escolher "Tela inteira" e marcar "Compartilhar áudio do sistema" na janela do navegador.
+- **Navegador (Chrome/Edge)**: não há escolha de aplicativo; o Concord pede ao navegador para excluir o próprio som (`restrictOwnAudio`). O áudio só vai se você escolher "Tela inteira" e marcar "Compartilhar áudio do sistema" na janela do navegador.
 
-O `minicord-audio.exe` já vem compilado. Para recompilar depois de mexer no `.cpp` (precisa do Visual Studio Build Tools com C++), rode `npm run build:native --prefix desktop`.
+O `minicord-audio.exe` (modos `exclude`, `include`, `include-window` e `list`) já vem compilado. Para recompilar depois de mexer no `.cpp` (precisa do Visual Studio Build Tools com C++), rode `npm run build:native --prefix desktop`.
 
 ## Limitações conhecidas
 

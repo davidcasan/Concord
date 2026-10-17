@@ -6,14 +6,15 @@ export const DEFAULT_SETTINGS = {
   micId: '',
   camId: '',
   outId: '',
-  noiseSuppression: true,
+  noiseEngine: 'rnnoise', // 'off' | 'browser' (filtro do navegador) | 'rnnoise' (redutor local)
   echoCancellation: true,
   autoGainControl: true,
   micSensitivity: 100,
   micGateEnabled: false,
   micGateCut: -50,
   screenQuality: '1080p30',
-  shareAudio: true,
+  shareAudio: true, // navegador: pedir áudio ao compartilhar
+  shareAudioMode: 'auto', // app desktop: 'auto' (janela → áudio dela; tela → PC) | 'system' | 'none'
   sounds: true,
   volumes: {}, // identidade (ou identidade:screen) -> 0..1
   lastVolumes: {},
@@ -27,7 +28,10 @@ export const SCREEN_QUALITIES = {
 
 function load() {
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(KEY) || '{}') };
+    const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
+    // Configurações antigas só tinham o liga/desliga do filtro do navegador.
+    if (!saved.noiseEngine && saved.noiseSuppression === false) saved.noiseEngine = 'off';
+    return { ...DEFAULT_SETTINGS, ...saved };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }

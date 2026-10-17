@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { createMicAudioProcessor } from '../audio/micProcessor.js';
+import { RNNOISE_SAMPLE_RATE } from '../audio/rnnoise.js';
 import Modal from './Modal.jsx';
 
 const COLORS = ['#5865f2', '#eb459e', '#57f287', '#fee75c', '#ed4245', '#f47b67', '#3ba55c', '#faa61a', '#9b59b6', '#1abc9c', '#e67e22', '#95a5a6'];
@@ -221,12 +222,17 @@ function VoiceTab({ settings, updateSettings, voice, notify }) {
           />
           <small className="muted">O áudio abaixo desse nível é atenuado. Um corte mais baixo preserva sons mais suaves.</small>
         </label>
-        <Toggle
-          label="Supressão de ruído"
-          hint="Reduz barulhos de fundo (teclado, ventilador)."
-          checked={settings.noiseSuppression}
-          onChange={(v) => setProcessing({ noiseSuppression: v })}
-        />
+        <label>
+          Redução de ruído
+          <select value={settings.noiseEngine} onChange={(e) => setProcessing({ noiseEngine: e.target.value })}>
+            <option value="rnnoise">Avançada (RNNoise, local)</option>
+            <option value="browser">Padrão (filtro do navegador)</option>
+            <option value="off">Desligada</option>
+          </select>
+          <small className="muted">
+            A avançada usa uma rede neural que roda no seu computador e remove teclado, ventilador e outros ruídos de fundo. Nada sai da sua máquina.
+          </small>
+        </label>
         <Toggle
           label="Cancelamento de eco"
           hint="Desligue se estiver usando fone e quiser mais qualidade."
@@ -261,7 +267,7 @@ function MicTest({ settings, notify }) {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: settings.micId || undefined,
-          noiseSuppression: settings.noiseSuppression,
+          noiseSuppression: settings.noiseEngine === 'browser',
           echoCancellation: settings.echoCancellation,
           autoGainControl: settings.autoGainControl,
         },
@@ -269,9 +275,10 @@ function MicTest({ settings, notify }) {
       let ctx;
       const processor = createMicAudioProcessor(settings);
       try {
-        ctx = new AudioContext();
+        ctx = new AudioContext({ sampleRate: RNNOISE_SAMPLE_RATE });
         await ctx.resume();
         await processor.init({ track: stream.getAudioTracks()[0], audioContext: ctx });
+        if (processor.noiseError) notify(`Não foi possível ligar a redução de ruído: ${processor.noiseError.message}`);
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 512;
         ctx.createMediaStreamSource(new MediaStream([processor.processedTrack])).connect(analyser);

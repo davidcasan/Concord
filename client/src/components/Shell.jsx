@@ -12,6 +12,7 @@ import MemberList from './MemberList.jsx';
 import ChannelModal from './ChannelModal.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ScreenPicker from './ScreenPicker.jsx';
+import ScreenAudioModal from './ScreenAudioModal.jsx';
 import VolumeContextMenu from './VolumeContextMenu.jsx';
 
 const byId = (list) => Object.fromEntries(list.map((u) => [u.id, u]));
@@ -173,7 +174,9 @@ export default function Shell({ onLogout, onSessionConflict }) {
     else setModal({ type: 'screen' });
   };
 
-  const voiceControls = { ...voice, openScreenShare };
+  const openScreenAudio = () => setModal({ type: 'screenAudio' });
+
+  const voiceControls = { ...voice, openScreenShare, openScreenAudio };
 
   if (!me) return <div className="splash">{connected ? 'Carregando…' : 'Conectando ao servidor…'}</div>;
 
@@ -274,6 +277,8 @@ export default function Shell({ onLogout, onSessionConflict }) {
           }}
         />
       )}
+
+      {modal?.type === 'screenAudio' && <ScreenAudioModal voice={voice} updateSettings={updateSettings} onClose={() => setModal(null)} />}
 
       {!connected && <div className="offline-banner">Conexão com o servidor perdida. Tentando reconectar…</div>}
       <div className="toasts">

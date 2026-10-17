@@ -1,4 +1,5 @@
 import workletUrl from './mic-gate-worklet.js?url&no-inline';
+import { createRnnoiseNode } from './rnnoise.js';
 
 const workletModules = new WeakMap();
 
@@ -30,6 +31,7 @@ export function createMicAudioProcessor(settings) {
   let source;
   let node;
   let destination;
+  let rnnoise = null;
   let currentSettings = settings;
   let fallbackGateGain = 1;
 
@@ -50,15 +52,46 @@ export function createMicAudioProcessor(settings) {
     }
   };
 
+  // Cadeia: microfone → (RNNoise) → sensibilidade/gate → destino.
+  const wire = () => {
+    if (!source || !node) return;
+    source.disconnect();
+    rnnoise?.disconnect();
+    if (rnnoise && currentSettings.noiseEngine === 'rnnoise') {
+      source.connect(rnnoise);
+      rnnoise.connect(node);
+    } else {
+      source.connect(node);
+    }
+  };
+
+  const syncNoiseEngine = async () => {
+    if (currentSettings.noiseEngine === 'rnnoise' && !rnnoise) {
+      const created = await createRnnoiseNode(context);
+      if (!node) {
+        // O processador foi destruído enquanto o RNNoise carregava.
+        created.destroy();
+        return;
+      }
+      rnnoise = created;
+    }
+    wire();
+    if (currentSettings.noiseEngine !== 'rnnoise' && rnnoise) {
+      rnnoise.destroy();
+      rnnoise = null;
+    }
+  };
+
   const connectTrack = (track) => {
     source?.disconnect();
     source = context.createMediaStreamSource(new MediaStream([track]));
-    source.connect(node);
+    wire();
   };
 
   return {
     name: 'concord-mic-sensitivity-gate',
     processedTrack: undefined,
+    noiseError: undefined,
 
     async init({ track, audioContext }) {
       if (!audioContext) throw new Error('O processamento do microfone precisa de um AudioContext.');
@@ -80,6 +113,12 @@ export function createMicAudioProcessor(settings) {
       }
       node.connect(destination);
       connectTrack(track);
+      try {
+        await syncNoiseEngine();
+      } catch (error) {
+        // Sem o RNNoise a voz segue só com ganho/gate; quem chamou decide como avisar.
+        this.noiseError = error;
+      }
       this.processedTrack = destination.stream.getAudioTracks()[0];
     },
 
@@ -88,13 +127,17 @@ export function createMicAudioProcessor(settings) {
       if (node.port) applySettings(node, currentSettings);
     },
 
-    update(nextSettings) {
+    async update(nextSettings) {
       currentSettings = nextSettings;
       if (node?.port) applySettings(node, currentSettings);
+      await syncNoiseEngine();
     },
 
     async destroy() {
       source?.disconnect();
+      rnnoise?.disconnect();
+      rnnoise?.destroy();
+      rnnoise = null;
       node?.disconnect();
       if (node && 'onaudioprocess' in node) node.onaudioprocess = null;
       for (const track of destination?.stream.getTracks() || []) track.stop();
