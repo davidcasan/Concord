@@ -35,6 +35,14 @@ export default function SettingsModal({ me, settings, updateSettings, voice, onL
             <section>
               <h3>Notificações</h3>
               <Toggle label="Sons (entrar/sair, mutar, novas mensagens)" checked={settings.sounds} onChange={(v) => updateSettings({ sounds: v })} />
+              {window.minicordDesktop?.isDesktop && (
+                <Toggle
+                  label="Abrir transmissões em janelas flutuantes"
+                  hint="Quando alguém compartilhar a tela, ela abre sozinha numa janela sempre no topo (cada tela numa janela)."
+                  checked={!!settings.autoPopup}
+                  onChange={(v) => updateSettings({ autoPopup: v })}
+                />
+              )}
             </section>
           )}
         </div>

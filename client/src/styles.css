@@ -1326,6 +1326,41 @@ h3 {
 .source.selected {
   border-color: var(--accent);
 }
+.source {
+  position: relative;
+}
+.source:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.source-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: white;
+  font-weight: 700;
+  font-size: 12px;
+}
+.small-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+/* Mantém a transmissão assinada no LiveKit enquanto ela está só numa janela flutuante. */
+.popup-keepalive video {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 2px;
+  height: 2px;
+  opacity: 0.01;
+  pointer-events: none;
+}
 .audio-sources {
   margin-bottom: 12px;
 }

@@ -8,6 +8,7 @@ import { createMicAudioProcessor } from './audio/micProcessor.js';
 import { RNNOISE_SAMPLE_RATE } from './audio/rnnoise.js';
 
 const NO_SCREEN_AUDIO = { type: 'none' };
+export const MAX_SCREENS = 2; // telas/janelas transmitidas ao mesmo tempo
 
 const SCREEN_AUDIO_PUBLISH = {
   source: Track.Source.ScreenShareAudio,
@@ -22,7 +23,7 @@ const SCREEN_AUDIO_PUBLISH = {
  * dá para continuar conectado na voz enquanto navega pelas salas de texto.
  */
 export function useVoice({ socket, settings, updateSettings, notify }) {
-  const room = useMemo(() => new Room({ adaptiveStream: true, dynacast: true }), []);
+  const room = useMemo(() => new Room({ adaptiveStream: { pauseVideoInBackground: false }, dynacast: true }), []);
   const [channelId, setChannelId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle | connecting | connected | reconnecting
   const [muted, setMuted] = useState(false);
@@ -30,9 +31,10 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
   const [camera, setCamera] = useState(false);
   const [screen, setScreen] = useState(false);
   const [screenAudio, setScreenAudioState] = useState(NO_SCREEN_AUDIO); // fonte do áudio da transmissão
-  const [screenSource, setScreenSource] = useState(null); // { id, name } do vídeo compartilhado
+  const [screens, setScreens] = useState([]); // telas no ar: { sid, index, sourceId, name }
 
-  const screenTracks = useRef([]);
+  const screenTracks = useRef([]); // vídeos e áudio da transmissão (para publicar/despublicar)
+  const screenVideos = useRef([]); // só os vídeos: { sid, index, track, sourceId, name }
   const systemAudio = useRef(null);
   const micAudioContext = useRef(null);
   const leaving = useRef(false);
@@ -153,13 +155,32 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
         track.stop?.();
       }
     }
+    screenVideos.current = [];
     setScreenAudioState(NO_SCREEN_AUDIO);
-    setScreenSource(null);
+    setScreens([]);
     if (tracks.length) {
       setScreen(false);
       emit({ screen: false });
     }
   }, [room, emit]);
+
+  /** Para uma das telas. Quando a última sai, a transmissão inteira (inclusive o áudio) termina. */
+  const removeScreen = useCallback(
+    async (sid) => {
+      const entry = screenVideos.current.find((e) => e.sid === sid);
+      if (!entry) return;
+      screenVideos.current = screenVideos.current.filter((e) => e !== entry);
+      screenTracks.current = screenTracks.current.filter((t) => t !== entry.track);
+      setScreens((list) => list.filter((x) => x.sid !== sid));
+      try {
+        await room.localParticipant.unpublishTrack(entry.track, true);
+      } catch {
+        entry.track.stop?.();
+      }
+      if (!screenVideos.current.length) await stopScreen();
+    },
+    [room, stopScreen],
+  );
 
   /** Remove só o áudio da transmissão; o vídeo continua no ar. */
   const removeScreenAudio = useCallback(async () => {
@@ -222,8 +243,9 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
 
   const resetLocal = () => {
     screenTracks.current = [];
+    screenVideos.current = [];
     setScreenAudioState(NO_SCREEN_AUDIO);
-    setScreenSource(null);
+    setScreens([]);
     setChannelId(null);
     setStatus('idle');
     setCamera(false);
@@ -309,59 +331,87 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
     }
   }, [room, emit, notify]);
 
-  /** Inicia o compartilhamento. No app desktop, `sourceId` vem do seletor de telas/janelas. */
-  const startScreen = useCallback(
-    async ({ sourceId, sourceName, audio }) => {
-      if (room.state !== 'connected') return;
-      await stopScreen();
-      const q = SCREEN_QUALITIES[settingsRef.current.screenQuality] || SCREEN_QUALITIES['1080p30'];
-      // No app desktop, o áudio vem do capturador nativo, escolhido independente do vídeo
-      // (todo o PC sem o som do Concord, ou só de um aplicativo/janela). `audio` é a fonte escolhida.
-      const audioSource = audio && typeof audio === 'object' ? audio : audio ? { type: 'system' } : NO_SCREEN_AUDIO;
-      const nativeAudio = audioSource.type !== 'none' && nativeSystemAudioAvailable();
-      const browserAudio = audioSource.type !== 'none' && !nativeAudio;
-      let stream;
-      try {
-        if (window.minicordDesktop) await window.minicordDesktop.selectSource(sourceId, browserAudio);
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            width: { ideal: q.width },
-            height: { ideal: q.height },
-            frameRate: { ideal: q.frameRate, max: q.frameRate },
-          },
-          audio: browserAudio
-            ? {
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false,
-                // Pede para não capturar o próprio Minicord (evita que os amigos ouçam a própria voz de volta).
-                restrictOwnAudio: true,
-                suppressLocalAudioPlayback: false,
-              }
-            : false,
-          systemAudio: browserAudio ? 'include' : 'exclude',
-          selfBrowserSurface: 'exclude',
-          surfaceSwitching: 'include',
-        });
-      } catch (err) {
-        if (err.name !== 'NotAllowedError' && err.name !== 'AbortError') {
-          notify(`Não foi possível compartilhar a tela: ${err.message}`);
-        }
-        return;
-      }
+  /** Captura uma tela/janela e publica como uma transmissão de vídeo (até duas ao mesmo tempo). */
+  const publishScreenVideo = useCallback(
+    async ({ sourceId, sourceName, browserAudio = false }) => {
+      const base = SCREEN_QUALITIES[settingsRef.current.screenQuality] || SCREEN_QUALITIES['1080p30'];
+      // Com duas telas no ar, a segunda é mais leve (30 fps, 70% do bitrate) para caber na banda e no processador.
+      const q = screenVideos.current.length ? { ...base, frameRate: Math.min(base.frameRate, 30), bitrate: Math.round(base.bitrate * 0.7) } : base;
+      if (window.minicordDesktop) await window.minicordDesktop.selectSource(sourceId, browserAudio);
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: q.width },
+          height: { ideal: q.height },
+          frameRate: { ideal: q.frameRate, max: q.frameRate },
+        },
+        audio: browserAudio
+          ? {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+              // Pede para não capturar o próprio Minicord (evita que os amigos ouçam a própria voz de volta).
+              restrictOwnAudio: true,
+              suppressLocalAudioPlayback: false,
+            }
+          : false,
+        systemAudio: browserAudio ? 'include' : 'exclude',
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include',
+      });
 
+      const [videoTrack] = stream.getVideoTracks();
+      videoTrack.contentHint = q.frameRate >= 60 ? 'motion' : 'detail';
+      const index = screenVideos.current.some((e) => e.index === 1) ? 2 : 1;
+      let pub;
       try {
-        const [videoTrack] = stream.getVideoTracks();
-        videoTrack.contentHint = q.frameRate >= 60 ? 'motion' : 'detail';
-        const videoPub = await room.localParticipant.publishTrack(videoTrack, {
+        pub = await room.localParticipant.publishTrack(videoTrack, {
           source: Track.Source.ScreenShare,
+          name: `screen-${index}`,
           simulcast: false,
           videoEncoding: { maxBitrate: q.bitrate, maxFramerate: q.frameRate },
           degradationPreference: q.frameRate >= 60 ? 'maintain-framerate' : 'maintain-resolution',
         });
-        screenTracks.current = [videoPub.track];
+      } catch (error) {
+        stream.getTracks().forEach((t) => t.stop());
+        throw error;
+      }
+      const entry = { sid: pub.trackSid, index, track: pub.track, sourceId, name: sourceName || '' };
+      screenVideos.current.push(entry);
+      screenTracks.current.push(pub.track);
+      setScreens((list) => [...list, { sid: entry.sid, index, sourceId, name: entry.name }]);
+      // Usuário clicou em "parar de compartilhar" na barra do navegador (ou a janela foi fechada).
+      videoTrack.addEventListener('ended', () => void removeScreen(entry.sid));
+      return { entry, stream };
+    },
+    [room, removeScreen],
+  );
 
-        setScreenSource(sourceId ? { id: sourceId, name: sourceName || '' } : null);
+  const isCancel = (err) => err.name === 'NotAllowedError' || err.name === 'AbortError';
+
+  /**
+   * Inicia o compartilhamento com uma ou duas telas. No app desktop, `sources` ([{ sourceId, sourceName }])
+   * vem do seletor de telas/janelas. O áudio é único e independente das telas: `audio` é a fonte escolhida
+   * (todo o PC sem o som do Concord, ou só de um aplicativo/janela).
+   */
+  const startScreen = useCallback(
+    async ({ sources, sourceId, sourceName, audio }) => {
+      if (room.state !== 'connected') return;
+      await stopScreen();
+      const list = (sources?.length ? sources : [{ sourceId, sourceName }]).slice(0, MAX_SCREENS);
+      const audioSource = audio && typeof audio === 'object' ? audio : audio ? { type: 'system' } : NO_SCREEN_AUDIO;
+      const nativeAudio = audioSource.type !== 'none' && nativeSystemAudioAvailable();
+      const browserAudio = audioSource.type !== 'none' && !nativeAudio;
+
+      let first;
+      try {
+        first = await publishScreenVideo({ ...list[0], browserAudio });
+      } catch (err) {
+        await stopScreen();
+        if (!isCancel(err)) notify(`Não foi possível compartilhar a tela: ${err.message}`);
+        return;
+      }
+
+      try {
         if (nativeAudio) {
           try {
             await addScreenAudio(audioSource);
@@ -370,24 +420,51 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
             notify(`Não foi possível capturar o áudio escolhido (${err.message}). Compartilhando só o vídeo.`);
           }
         } else {
-          const [audioTrack] = stream.getAudioTracks();
+          const [audioTrack] = first.stream.getAudioTracks();
           if (audioTrack) {
             const audioPub = await room.localParticipant.publishTrack(audioTrack, SCREEN_AUDIO_PUBLISH);
             screenTracks.current.push(audioPub.track);
           }
         }
-
-        // Usuário clicou em "parar de compartilhar" na barra do navegador.
-        videoTrack.addEventListener('ended', () => stopScreen());
         setScreen(true);
         emit({ screen: true });
       } catch (err) {
-        stream.getTracks().forEach((t) => t.stop());
+        first.stream.getTracks().forEach((t) => t.stop());
         await stopScreen();
         notify(`Falha ao transmitir a tela: ${err.message}`);
+        return;
+      }
+
+      for (const extra of list.slice(1)) {
+        try {
+          await publishScreenVideo({ ...extra });
+        } catch (err) {
+          if (!isCancel(err)) notify(`Não foi possível compartilhar a segunda tela: ${err.message}`);
+        }
       }
     },
-    [room, stopScreen, emit, notify, addScreenAudio],
+    [room, stopScreen, emit, notify, addScreenAudio, publishScreenVideo],
+  );
+
+  /** Adiciona outra tela/janela a uma transmissão já no ar (o áudio não muda). */
+  const addScreen = useCallback(
+    async ({ sourceId, sourceName }) => {
+      if (room.state !== 'connected' || !screenVideos.current.length) return;
+      if (screenVideos.current.length >= MAX_SCREENS) {
+        notify(`O limite é de ${MAX_SCREENS} telas por transmissão.`);
+        return;
+      }
+      if (sourceId && screenVideos.current.some((e) => e.sourceId === sourceId)) {
+        notify('Essa tela já está sendo compartilhada.');
+        return;
+      }
+      try {
+        await publishScreenVideo({ sourceId, sourceName });
+      } catch (err) {
+        if (!isCancel(err)) notify(`Não foi possível adicionar a tela: ${err.message}`);
+      }
+    },
+    [room, notify, publishScreenVideo],
   );
 
   const setDevice = useCallback(
@@ -503,7 +580,9 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
     camera,
     screen,
     screenAudio,
-    screenSource,
+    screens,
+    addScreen,
+    removeScreen,
     setScreenAudio,
     join,
     leave,

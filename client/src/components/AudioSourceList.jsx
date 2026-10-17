@@ -9,9 +9,9 @@ const sameSource = (a, b) =>
 /**
  * Lista de fontes de áudio da transmissão (app desktop): nenhuma, todo o computador,
  * o aplicativo da janela compartilhada ou qualquer aplicativo com áudio aberto.
- * `windowSource`: { id, name } quando o vídeo compartilhado é uma janela.
+ * `windowSources`: [{ id, name }] das janelas (não telas) que estão sendo compartilhadas.
  */
-export default function AudioSourceList({ value, onChange, windowSource }) {
+export default function AudioSourceList({ value, onChange, windowSources = [] }) {
   const [apps, setApps] = useState(null);
   const [error, setError] = useState('');
 
@@ -29,7 +29,7 @@ export default function AudioSourceList({ value, onChange, windowSource }) {
     { source: { type: 'none' }, label: 'Sem áudio', icon: <VolumeX size={18} /> },
     { source: { type: 'system' }, label: 'Todo o áudio do computador', hint: 'Sem a voz dos seus amigos', icon: <Monitor size={18} /> },
   ];
-  if (windowSource) {
+  for (const windowSource of windowSources) {
     rows.push({
       source: { type: 'window', windowId: windowSource.id, name: windowSource.name },
       label: `Janela compartilhada: ${windowSource.name}`,

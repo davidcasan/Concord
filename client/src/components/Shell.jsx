@@ -12,7 +12,8 @@ import MemberList from './MemberList.jsx';
 import ChannelModal from './ChannelModal.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ScreenPicker from './ScreenPicker.jsx';
-import ScreenAudioModal from './ScreenAudioModal.jsx';
+import ShareManagerModal from './ShareManagerModal.jsx';
+import { StreamPopups } from './StreamPopups.jsx';
 import VolumeContextMenu from './VolumeContextMenu.jsx';
 
 const byId = (list) => Object.fromEntries(list.map((u) => [u.id, u]));
@@ -174,9 +175,9 @@ export default function Shell({ onLogout, onSessionConflict }) {
     else setModal({ type: 'screen' });
   };
 
-  const openScreenAudio = () => setModal({ type: 'screenAudio' });
+  const openShareManager = () => setModal({ type: 'shareManager' });
 
-  const voiceControls = { ...voice, openScreenShare, openScreenAudio };
+  const voiceControls = { ...voice, openScreenShare, openShareManager };
 
   if (!me) return <div className="splash">{connected ? 'Carregando…' : 'Conectando ao servidor…'}</div>;
 
@@ -236,6 +237,7 @@ export default function Shell({ onLogout, onSessionConflict }) {
       </div>
 
       <VoiceAudio deafened={voice.deafened} volumes={settings.volumes} />
+      <StreamPopups voice={voice} users={users} autoOpen={!!settings.autoPopup} />
       {volumeMenu && (
         <VolumeContextMenu
           menu={volumeMenu}
@@ -278,7 +280,27 @@ export default function Shell({ onLogout, onSessionConflict }) {
         />
       )}
 
-      {modal?.type === 'screenAudio' && <ScreenAudioModal voice={voice} updateSettings={updateSettings} onClose={() => setModal(null)} />}
+      {modal?.type === 'shareManager' && (
+        <ShareManagerModal
+          voice={voice}
+          updateSettings={updateSettings}
+          onAddScreen={() => setModal({ type: 'screenAdd' })}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.type === 'screenAdd' && (
+        <ScreenPicker
+          mode="add"
+          settings={settings}
+          updateSettings={updateSettings}
+          taken={voice.screens.map((s) => s.sourceId).filter(Boolean)}
+          onClose={() => setModal({ type: 'shareManager' })}
+          onPick={({ sources }) => {
+            setModal({ type: 'shareManager' });
+            voice.addScreen(sources[0]);
+          }}
+        />
+      )}
 
       {!connected && <div className="offline-banner">Conexão com o servidor perdida. Tentando reconectar…</div>}
       <div className="toasts">

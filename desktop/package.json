@@ -20,6 +20,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "popups.js",
       "setup.html",
       "default-server.json",
       "assets/concord.svg"

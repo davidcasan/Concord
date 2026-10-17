@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, desktopCapturer, ipcMain, session, shell } = r
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { PREFIX: POPUP_PREFIX, isPopupRequest, popupOpenResult, setupPopupWindow } = require('./popups.js');
 
 app.setName('Concord');
 app.setPath('userData', path.join(app.getPath('appData'), 'Minicord'));
@@ -134,10 +135,16 @@ function createWindow() {
   });
 
   // Links externos abrem no navegador padrão.
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) shell.openExternal(url);
+  win.webContents.setWindowOpenHandler((details) => {
+    if (isPopupRequest(details)) return popupOpenResult(); // janelas flutuantes das transmissões
+    if (/^https?:/.test(details.url)) shell.openExternal(details.url);
     return { action: 'deny' };
   });
+  win.webContents.on('did-create-window', (child, details) => {
+    if (String(details.frameName).startsWith(POPUP_PREFIX)) setupPopupWindow(child);
+  });
+  // Fechar a janela principal fecha os popups (senão o app não encerraria).
+  win.on('closed', () => BrowserWindow.getAllWindows().forEach((w) => w.close()));
   win.webContents.on('will-navigate', (event, url) => {
     if (url.startsWith('file:') || (serverOrigin && url.startsWith(serverOrigin))) return;
     event.preventDefault();

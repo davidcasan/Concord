@@ -11,7 +11,7 @@ import {
   Plus,
   ScreenShare,
   ScreenShareOff,
-  AudioLines,
+  SlidersHorizontal,
   Settings,
   Trash,
   Video,
@@ -148,9 +148,9 @@ export default function Sidebar({
             >
               {voice.screen ? <ScreenShareOff size={18} /> : <ScreenShare size={18} />}
             </button>
-            {voice.screen && window.minicordDesktop?.listAudioApps && (
-              <button className="icon-btn" title="Áudio da transmissão" onClick={voice.openScreenAudio}>
-                <AudioLines size={18} />
+            {voice.screen && (
+              <button className="icon-btn" title="Gerenciar transmissão (telas e áudio)" onClick={voice.openShareManager}>
+                <SlidersHorizontal size={18} />
               </button>
             )}
             <button className="icon-btn danger" title="Desconectar" onClick={() => voice.leave()}>

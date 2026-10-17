@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS = {
   shareAudio: true, // navegador: pedir áudio ao compartilhar
   shareAudioMode: 'auto', // app desktop: 'auto' (janela → áudio dela; tela → PC) | 'system' | 'none'
   sounds: true,
+  autoPopup: false, // app desktop: abrir as transmissões dos outros em janelas flutuantes sozinho
   volumes: {}, // identidade (ou identidade:screen) -> 0..1
   lastVolumes: {},
 };

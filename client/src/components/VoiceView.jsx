@@ -26,6 +26,9 @@ import {
   VolumeX,
 } from 'lucide-react';
 import Avatar from './Avatar.jsx';
+import { PopupAllButton, openScreenPopup } from './StreamPopups.jsx';
+import { closeStreamPopup, popupsAvailable, useOpenPopupIds } from '../popups.js';
+import { describeScreen, isScreenRef, screenSid } from '../screens.js';
 
 /** Toca o áudio de todos os outros participantes (voz + áudio de tela), respeitando volume e "ensurdecer". */
 export function VoiceAudio({ deafened, volumes }) {
@@ -93,6 +96,7 @@ export default function VoiceView({ channel, voice, members, users, volumes, not
         <button className={`round-btn${voice.screen ? ' on' : ''}`} title={voice.screen ? 'Parar de compartilhar' : 'Compartilhar tela'} onClick={voice.openScreenShare}>
           {voice.screen ? <ScreenShareOff /> : <ScreenShare />}
         </button>
+        <PopupAllButton users={users} />
         <button className="round-btn danger" title="Desconectar" onClick={() => voice.leave()}>
           <PhoneOff />
         </button>
@@ -112,7 +116,9 @@ function AudioUnlock() {
   );
 }
 
-const keyOf = (t) => `${t.participant.identity}:${t.source}`;
+// Uma pessoa pode ter até duas telas: o id da transmissão separa uma da outra.
+const keyOf = (t) =>
+  isScreenRef(t) && screenSid(t) ? `${t.participant.identity}:${t.source}:${screenSid(t)}` : `${t.participant.identity}:${t.source}`;
 
 function Stage({ users, volumes, voice, notify, openVolumeMenu }) {
   const tracks = useTracks(
@@ -123,7 +129,9 @@ function Stage({ users, volumes, voice, notify, openVolumeMenu }) {
     { onlySubscribed: false },
   );
   const [focus, setFocus] = useState(null);
-  const remoteScreens = tracks.filter((t) => t.source === Track.Source.ScreenShare && !t.participant.isLocal);
+  const allScreens = tracks.filter(isScreenRef);
+  const remoteScreens = allScreens.filter((t) => !t.participant.isLocal);
+  const openIds = useOpenPopupIds();
   const lastScreens = useRef(new Set());
   const remoteScreenKeys = remoteScreens.map(keyOf).join('|');
 
@@ -143,6 +151,9 @@ function Stage({ users, volumes, voice, notify, openVolumeMenu }) {
       trackRef={t}
       user={users[t.participant.identity]}
       className={extra}
+      screens={allScreens}
+      remoteScreens={remoteScreens}
+      popupOpen={openIds.has(screenSid(t))}
       onClick={() => toggleFocus(t)}
       volumes={volumes}
       setVolume={voice.setVolume}
@@ -168,7 +179,7 @@ function Stage({ users, volumes, voice, notify, openVolumeMenu }) {
   );
 }
 
-function Tile({ trackRef, user, className = '', onClick, volumes, setVolume, notify, openVolumeMenu }) {
+function Tile({ trackRef, user, className = '', screens = [], remoteScreens = [], popupOpen = false, onClick, volumes, setVolume, notify, openVolumeMenu }) {
   const ref = useRef(null);
   const participant = trackRef.participant;
   const isScreen = trackRef.source === Track.Source.ScreenShare;
@@ -189,6 +200,12 @@ function Tile({ trackRef, user, className = '', onClick, volumes, setVolume, not
 
   const popOut = async (e) => {
     e.stopPropagation();
+    if (popupsAvailable()) {
+      // App desktop: uma janela própria por transmissão (várias ao mesmo tempo).
+      if (popupOpen) closeStreamPopup(screenSid(trackRef));
+      else if (!openScreenPopup(trackRef, remoteScreens, { [participant.identity]: user })) notify('Não foi possível abrir a janela da transmissão.');
+      return;
+    }
     const video = ref.current?.querySelector('video');
     if (!document.pictureInPictureEnabled || !video?.requestPictureInPicture) {
       notify('A janela flutuante de vídeo não é compatível com este ambiente.');
@@ -228,12 +245,17 @@ function Tile({ trackRef, user, className = '', onClick, volumes, setVolume, not
       <div className="tile-label">
         {!isScreen && micMuted && <MicOff size={14} className="red" />}
         {isScreen && <ScreenShare size={14} />}
-        <span>{isScreen ? `Tela de ${name}` : name}</span>
+        <span>{isScreen ? describeScreen(trackRef, screens, { [participant.identity]: user }).label : name}</span>
       </div>
 
       <div className="tile-actions" onClick={(e) => e.stopPropagation()}>
         {isScreen && hasVideo && !participant.isLocal && (
-          <button title="Abrir transmissão em janela flutuante" aria-label="Abrir transmissão em janela flutuante" onClick={popOut}>
+          <button
+            className={popupOpen ? 'on' : ''}
+            title={popupOpen ? 'Fechar a janela desta transmissão' : 'Abrir transmissão em janela flutuante'}
+            aria-label="Abrir transmissão em janela flutuante"
+            onClick={popOut}
+          >
             <PictureInPicture2 size={16} />
           </button>
         )}
