@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { api } from '../api.js';
+import { api, uploadAvatar } from '../api.js';
+import { prepareAvatar } from '../avatar.js';
+import Avatar from './Avatar.jsx';
 import { createMicAudioProcessor } from '../audio/micProcessor.js';
 import { RNNOISE_SAMPLE_RATE } from '../audio/rnnoise.js';
 import Modal from './Modal.jsx';
@@ -60,6 +62,38 @@ function AccountTab({ me, notify }) {
   const [next, setNext] = useState('');
   const [error, setError] = useState('');
   const [pwError, setPwError] = useState('');
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState('');
+  const fileInput = useRef(null);
+
+  async function choosePhoto(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // permite escolher o mesmo arquivo de novo
+    if (!file) return;
+    setPhotoError('');
+    setPhotoBusy(true);
+    try {
+      await uploadAvatar(await prepareAvatar(file));
+      notify('Foto de perfil atualizada.');
+    } catch (err) {
+      setPhotoError(err.message);
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  async function removePhoto() {
+    setPhotoError('');
+    setPhotoBusy(true);
+    try {
+      await api('/me/avatar', { method: 'DELETE' });
+      notify('Foto de perfil removida.');
+    } catch (err) {
+      setPhotoError(err.message);
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
 
   async function saveProfile(e) {
     e.preventDefault();
@@ -87,6 +121,28 @@ function AccountTab({ me, notify }) {
 
   return (
     <>
+      <section>
+        <h3>Foto de perfil</h3>
+        <div className="avatar-edit">
+          <Avatar user={me} size={80} />
+          <div>
+            <div className="avatar-edit-buttons">
+              <button type="button" className="btn primary" disabled={photoBusy} onClick={() => fileInput.current?.click()}>
+                {photoBusy ? 'Enviando…' : 'Enviar foto'}
+              </button>
+              {me.avatar && (
+                <button type="button" className="btn ghost" disabled={photoBusy} onClick={removePhoto}>
+                  Remover foto
+                </button>
+              )}
+            </div>
+            <p className="muted small">PNG, JPG, WebP ou GIF, até 10 MB. A imagem é recortada em quadrado.</p>
+          </div>
+          <input ref={fileInput} type="file" accept="image/*" hidden onChange={choosePhoto} />
+        </div>
+        {photoError && <div className="form-error">{photoError}</div>}
+      </section>
+
       <form onSubmit={saveProfile}>
         <h3>Perfil</h3>
         <label>

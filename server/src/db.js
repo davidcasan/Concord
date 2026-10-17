@@ -49,6 +49,18 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, id);
 `);
 
+// Foto de perfil: a versão fica em users (leve, vai para todos); a imagem fica à parte para não pesar nas listas.
+if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'avatar_version')) {
+  db.exec('ALTER TABLE users ADD COLUMN avatar_version INTEGER');
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_avatars (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    mime    TEXT NOT NULL,
+    data    BLOB NOT NULL
+  );
+`);
+
 if (db.prepare('SELECT COUNT(*) AS n FROM channels').get().n === 0) {
   const insert = db.prepare('INSERT INTO channels (name, type, created_at) VALUES (?, ?, ?)');
   const now = Date.now();
@@ -68,6 +80,7 @@ export function publicUser(row) {
     displayName: row.display_name,
     color: row.color,
     isAdmin: !!row.is_admin,
+    avatar: row.avatar_version || null, // versão da foto (muda a cada envio); null = sem foto
   };
 }
 

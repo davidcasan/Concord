@@ -283,6 +283,24 @@ h3 {
   user-select: none;
   transition: box-shadow 0.1s;
 }
+.avatar-photo {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.avatar-edit {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+.avatar-edit-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .avatar.speaking {
   box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--green);
 }

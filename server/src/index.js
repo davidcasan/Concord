@@ -132,6 +132,64 @@ app.patch('/api/me', auth, (req, res) => {
   res.json({ user: getUser(req.user.id) });
 });
 
+// ---------- Foto de perfil (até 10 MB) ----------
+const AVATAR_MAX_BYTES = 10 * 1024 * 1024;
+const AVATAR_TYPES = {
+  'image/png': (b) => b.length > 8 && b.readUInt32BE(0) === 0x89504e47,
+  'image/jpeg': (b) => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/webp': (b) => b.length > 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP',
+  'image/gif': (b) => b.length > 6 && b.toString('latin1', 0, 4) === 'GIF8',
+};
+const avatarBody = express.raw({ type: Object.keys(AVATAR_TYPES), limit: AVATAR_MAX_BYTES });
+
+app.put(
+  '/api/me/avatar',
+  auth,
+  (req, res, next) =>
+    avatarBody(req, res, (err) => {
+      if (!err) return next();
+      if (err.type === 'entity.too.large') return res.status(413).json({ error: 'A foto deve ter no máximo 10 MB.' });
+      res.status(400).json({ error: 'Não foi possível ler a imagem enviada.' });
+    }),
+  (req, res) => {
+    const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+    const body = req.body;
+    if (!AVATAR_TYPES[mime] || !Buffer.isBuffer(body) || body.length === 0) {
+      return res.status(415).json({ error: 'Use uma imagem PNG, JPG, WebP ou GIF.' });
+    }
+    // Confere o conteúdo, não só o cabeçalho informado pelo cliente.
+    if (!AVATAR_TYPES[mime](body)) return res.status(415).json({ error: 'O arquivo não é uma imagem válida.' });
+    db.prepare('INSERT INTO user_avatars (user_id, mime, data) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET mime = excluded.mime, data = excluded.data').run(
+      req.user.id,
+      mime,
+      body,
+    );
+    db.prepare('UPDATE users SET avatar_version = ? WHERE id = ?').run(Date.now(), req.user.id);
+    broadcastUsers();
+    res.json({ user: getUser(req.user.id) });
+  },
+);
+
+app.delete('/api/me/avatar', auth, (req, res) => {
+  db.prepare('DELETE FROM user_avatars WHERE user_id = ?').run(req.user.id);
+  db.prepare('UPDATE users SET avatar_version = NULL WHERE id = ?').run(req.user.id);
+  broadcastUsers();
+  res.json({ user: getUser(req.user.id) });
+});
+
+// Aberta (as imagens são carregadas por <img>, que não envia o token). A URL leva a versão, então o cache nunca fica velho.
+app.get('/api/avatars/:id', (req, res) => {
+  const row = db.prepare('SELECT mime, data FROM user_avatars WHERE user_id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).end();
+  res.set({
+    'Content-Type': row.mime,
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'none'",
+  });
+  res.send(Buffer.from(row.data));
+});
+
 app.post('/api/me/password', auth, (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
   const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);

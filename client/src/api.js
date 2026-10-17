@@ -44,3 +44,14 @@ export function emitAck(socket, event, payload) {
     });
   });
 }
+
+/** Envia a foto de perfil (já reduzida) como corpo binário. */
+export async function uploadAvatar(blob) {
+  const headers = { 'Content-Type': blob.type };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch('/api/me/avatar', { method: 'PUT', headers, body: blob });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(data.error || `Erro ${res.status}`, res.status);
+  return data;
+}
