@@ -50,7 +50,44 @@ const STYLE = `
     background: rgba(0, 0, 0, 0.65); color: #fff; font: 600 13px "Segoe UI", sans-serif; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
   body:hover .label { opacity: 1; }
+  body { cursor: grab; }
+  body.dragging { cursor: grabbing; }
+  .close { position: fixed; top: 6px; right: 6px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px;
+    background: rgba(0, 0, 0, 0.65); color: #fff; font: 18px/28px "Segoe UI", sans-serif; cursor: pointer;
+    opacity: 0; transition: opacity 0.15s, background 0.15s; }
+  body:hover .close { opacity: 1; }
+  .close:hover { background: #da373c; }
 `;
+
+// A janela não tem barra de título: arrastar em qualquer ponto do vídeo move a janela.
+function enableDrag(win, doc) {
+  let start = null;
+  let frame = 0;
+  let next = null;
+  doc.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || e.target.closest('.close') || doc.fullscreenElement) return;
+    start = { x: e.screenX, y: e.screenY, left: win.screenX, top: win.screenY };
+    doc.body.setPointerCapture(e.pointerId);
+  });
+  doc.addEventListener('pointermove', (e) => {
+    if (!start) return;
+    next = [start.left + e.screenX - start.x, start.top + e.screenY - start.y];
+    if (next[0] !== start.left || next[1] !== start.top) doc.body.classList.add('dragging');
+    if (!frame) {
+      frame = win.requestAnimationFrame(() => {
+        frame = 0;
+        if (next) win.moveTo(next[0], next[1]);
+      });
+    }
+  });
+  const stop = () => {
+    start = null;
+    next = null;
+    doc.body.classList.remove('dragging');
+  };
+  doc.addEventListener('pointerup', stop);
+  doc.addEventListener('pointercancel', stop);
+}
 
 function build(entry, title, track) {
   const doc = entry.win.document;
@@ -64,7 +101,9 @@ function build(entry, title, track) {
   video.muted = true; // o som toca na janela principal, com os volumes de cada pessoa
   video.playsInline = true;
   video.srcObject = new MediaStream([track]);
-  video.addEventListener('dblclick', () => {
+  // No documento (não no <video>): a captura do ponteiro durante o arraste redireciona o clique para o <body>.
+  doc.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.close')) return;
     if (doc.fullscreenElement) doc.exitFullscreen();
     else doc.documentElement.requestFullscreen?.();
   });
@@ -79,7 +118,16 @@ function build(entry, title, track) {
   const label = doc.createElement('div');
   label.className = 'label';
   label.textContent = title;
-  doc.body.append(video, label);
+  const close = doc.createElement('button');
+  close.className = 'close';
+  close.title = 'Fechar';
+  close.textContent = '✕';
+  close.addEventListener('click', () => entry.win.close());
+  doc.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !doc.fullscreenElement) entry.win.close();
+  });
+  doc.body.append(video, label, close);
+  enableDrag(entry.win, doc);
   entry.video = video;
   video.play().catch(() => {});
 }
