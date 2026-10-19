@@ -43,6 +43,7 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+
   const play = useCallback((name) => settingsRef.current.sounds && sounds[name](), []);
   const emit = useCallback((patch) => socket?.emit('voice:update', patch), [socket]);
 
@@ -343,6 +344,7 @@ export function useVoice({ socket, settings, updateSettings, notify }) {
           width: { ideal: q.width },
           height: { ideal: q.height },
           frameRate: { ideal: q.frameRate, max: q.frameRate },
+          cursor: 'always',
         },
         audio: browserAudio
           ? {

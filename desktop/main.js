@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, desktopCapturer, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, MessageChannelMain, desktopCapturer, ipcMain, screen, session, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -143,6 +143,8 @@ function createWindow() {
   win.webContents.on('did-create-window', (child, details) => {
     if (String(details.frameName).startsWith(POPUP_PREFIX)) setupPopupWindow(child);
   });
+  // Recarregar ou trocar de servidor encerra as capturas de tela (a página que as recebia não existe mais).
+  win.webContents.on('did-navigate', () => stopAllCaptures());
   // Fechar a janela principal fecha os popups (senão o app não encerraria).
   win.on('closed', () => BrowserWindow.getAllWindows().forEach((w) => w.close()));
   win.webContents.on('will-navigate', (event, url) => {
@@ -210,6 +212,9 @@ app.whenReady().then(() => {
   ipcMain.handle('minicord:select-source', (_e, id, audio) => {
     pendingShare = { id, audio: !!audio };
   });
+
+  ipcMain.handle('minicord:capture-start', (event, id, sourceId, options) => startCapture(event.sender, id, sourceId, options));
+  ipcMain.handle('minicord:capture-stop', (_e, id) => stopCapture(id));
 
   ipcMain.handle('minicord:system-audio-start', (event, source) => startSystemAudio(event.sender, source));
   ipcMain.handle('minicord:list-audio-apps', () => listAudioApps());
@@ -351,7 +356,125 @@ function listAudioApps() {
   });
 }
 
+// ---------- Captura de tela própria ----------
+// O minicord-capture.exe captura com DXGI Desktop Duplication e desenha o cursor ele mesmo. A captura do
+// Chromium (Windows Graphics Capture) some com o cursor, na tela de quem transmite, em jogos em janela sem
+// bordas em alguns Windows. Os quadros (I420) vão para a página por um MessagePort, um ou dois por vez:
+// se a página atrasar, fica só o mais recente.
+const FRAME_MAGIC = 0x3146434d; // "MCF1"
+const captures = new Map();
+
+const captureHelperPath = () =>
+  app.isPackaged ? path.join(process.resourcesPath, 'minicord-capture.exe') : path.join(__dirname, 'native', 'minicord-capture.exe');
+
+async function captureTarget(sourceId) {
+  const hwnd = /^window:(\d+):/.exec(String(sourceId))?.[1];
+  if (hwnd) return ['window', hwnd];
+  if (!String(sourceId).startsWith('screen:')) throw new Error('Fonte inválida.');
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+  const displayId = sources.find((s) => s.id === sourceId)?.display_id;
+  const display = screen.getAllDisplays().find((d) => String(d.id) === displayId) || screen.getPrimaryDisplay();
+  const { x, y, width, height } = display.bounds;
+  const center = screen.dipToScreenPoint({ x: x + Math.floor(width / 2), y: y + Math.floor(height / 2) });
+  return ['screen', String(Math.round(center.x)), String(Math.round(center.y))];
+}
+
+function sendFrame(capture, frame) {
+  if (capture.inFlight >= 2) {
+    capture.pending = frame;
+    return;
+  }
+  capture.inFlight++;
+  capture.port.postMessage(frame);
+}
+
+async function startCapture(sender, id, sourceId, { maxWidth, maxHeight, frameRate } = {}) {
+  if (process.platform !== 'win32') throw new Error('Disponível só no Windows.');
+  if (!fs.existsSync(captureHelperPath())) throw new Error('minicord-capture.exe não encontrado.');
+  const size = (value, fallback) => String(Math.max(2, Math.round(Number(value) || fallback)));
+  const args = [...(await captureTarget(sourceId)), size(maxWidth, 1920), size(maxHeight, 1080), size(frameRate, 30)];
+  return new Promise((resolve, reject) => {
+    const proc = spawn(captureHelperPath(), args, { windowsHide: true });
+    const { port1, port2 } = new MessageChannelMain();
+    const capture = { proc, port: port1, inFlight: 0, pending: null };
+    captures.set(id, capture);
+    port1.on('message', () => {
+      capture.inFlight = Math.max(0, capture.inFlight - 1); // a página terminou um quadro
+      if (capture.pending) {
+        const next = capture.pending;
+        capture.pending = null;
+        sendFrame(capture, next);
+      }
+    });
+    port1.start();
+
+    let started = false;
+    let errors = '';
+    proc.stderr.on('data', (d) => {
+      const text = d.toString();
+      if (!started && text.startsWith('ok')) {
+        started = true;
+        if (sender.isDestroyed()) return proc.kill();
+        sender.postMessage('minicord:capture-port', { id }, [port2]);
+        resolve();
+      } else {
+        errors += text;
+      }
+    });
+
+    // Cabeçalho de 12 bytes + I420; cada quadro vai para um buffer próprio (sem concatenar pedaços).
+    const header = Buffer.alloc(12);
+    let headerFill = 0;
+    let frame = null;
+    let frameFill = 0;
+    proc.stdout.on('data', (chunk) => {
+      let offset = 0;
+      while (offset < chunk.length) {
+        if (!frame) {
+          const n = Math.min(12 - headerFill, chunk.length - offset);
+          chunk.copy(header, headerFill, offset, offset + n);
+          headerFill += n;
+          offset += n;
+          if (headerFill < 12) break;
+          headerFill = 0;
+          if (header.readUInt32LE(0) !== FRAME_MAGIC) return proc.kill();
+          frame = { width: header.readUInt16LE(4), height: header.readUInt16LE(6), data: Buffer.allocUnsafe(header.readUInt32LE(8)) };
+          frameFill = 0;
+        }
+        const n = Math.min(frame.data.length - frameFill, chunk.length - offset);
+        chunk.copy(frame.data, frameFill, offset, offset + n);
+        frameFill += n;
+        offset += n;
+        if (frameFill === frame.data.length) {
+          if (started && captures.get(id) === capture) sendFrame(capture, frame);
+          frame = null;
+        }
+      }
+    });
+
+    proc.on('error', (err) => {
+      if (!started) reject(err);
+    });
+    proc.on('exit', (code) => {
+      if (captures.get(id) === capture) captures.delete(id);
+      if (!started) reject(new Error(errors.trim() || `o capturador encerrou (código ${code})`));
+      // Avisa a página (janela fechada, monitor desconectado...) para encerrar a transmissão dessa tela.
+      port1.postMessage({ ended: true, reason: errors.trim() });
+      port1.close();
+    });
+  });
+}
+
+function stopCapture(id) {
+  const capture = captures.get(id);
+  captures.delete(id);
+  capture?.proc.kill();
+}
+
+const stopAllCaptures = () => [...captures.keys()].forEach(stopCapture);
+
 app.on('will-quit', stopSystemAudio);
+app.on('will-quit', stopAllCaptures);
 
 app.on('second-instance', () => {
   if (win) {

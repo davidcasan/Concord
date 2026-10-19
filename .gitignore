@@ -8,3 +8,6 @@ livekit/livekit-server*
 livekit/livekit.yaml
 livekit/LICENSE
 desktop/default-server.json
+desktop/native/capture/bin/
+desktop/native/capture/obj/
+desktop/native/capture/out/

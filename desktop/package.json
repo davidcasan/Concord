@@ -11,7 +11,8 @@
     "start": "node start.js",
     "dist": "electron-builder --win",
     "server-manager": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-server-manager.ps1",
-    "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File native/build.ps1"
+    "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File native/build.ps1",
+    "build:capture": "dotnet publish native/capture -c Release -o native/capture/out && copy /Y native\\capture\\out\\minicord-capture.exe native\\minicord-capture.exe"
   },
   "build": {
     "appId": "com.concord.desktop",
@@ -48,6 +49,10 @@
       {
         "from": "native/minicord-audio.exe",
         "to": "minicord-audio.exe"
+      },
+      {
+        "from": "native/minicord-capture.exe",
+        "to": "minicord-capture.exe"
       }
     ]
   },

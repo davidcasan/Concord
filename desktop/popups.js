@@ -42,8 +42,7 @@ const keepOnTop = (win) => {
 
 function setupPopupWindow(child) {
   child.removeMenu();
-  keepOnTop(child);
-  // O Windows às vezes tira o "topmost" quando outra janela topmost (jogo, overlay) ganha o foco: reafirma.
+  child.setAlwaysOnTop(true);
   child.on('blur', () => keepOnTop(child));
   child.on('show', () => keepOnTop(child));
   child.on('leave-html-full-screen', () => keepOnTop(child));
