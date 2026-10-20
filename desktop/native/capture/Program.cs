@@ -10,6 +10,7 @@
 // stdout: quadros = cabeçalho de 12 bytes (uint32 'MCF1', uint16 largura, uint16 altura, uint32 tamanho) + I420.
 // Códigos de saída: 0 stdout fechado, 1 erro, 2 monitor indisponível, 3 janela fechada.
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -179,10 +180,21 @@ sealed unsafe class Duplicator : IDisposable
     public byte[] Frame; // última imagem, BGRA
     public bool Dirty; // há imagem nova na textura de leitura que ainda não foi copiada para Frame
     bool hasImage;
-    // A primeira imagem depois de uma reconexão é a cópia que o Windows guardou da tela, que pode ser antiga
-    // (com o jogo em janela sem bordas, era a tela de carregamento dele): descartá-la evita quadros "piscando".
-    bool skipNext;
-    IntPtr output1, device, context, dupl, staging;
+    // Logo depois de cada reconexão o Windows entrega, uma vez, a cópia que guardou da tela, que pode ser bem
+    // antiga (com o jogo em janela sem bordas, uma tela de carregamento de minutos atrás). Ela chega como 1ª ou
+    // 2ª imagem e, mostrada, vira um "pisca". A 1ª imagem de cada reconexão é descartada e sua assinatura fica
+    // guardada por 1 s; imagens com a mesma assinatura também são descartadas.
+    bool firstAfterReconnect;
+    readonly Dictionary<ulong, long> staleImages = new();
+
+    // Diagnóstico (MINICORD_CAPTURE_DEBUG=arquivo): uma linha por imagem recebida do Windows.
+    static readonly StreamWriter debug = Environment.GetEnvironmentVariable("MINICORD_CAPTURE_DEBUG") is { Length: > 0 } p
+        ? new StreamWriter(p) { AutoFlush = true }
+        : null;
+    int generation;
+
+    // staging: imagem atual (lida pelo Load). probe: onde cada imagem nova é examinada; se aceita, as duas trocam.
+    IntPtr output1, device, context, dupl, staging, probe;
 
     static IntPtr Vt(IntPtr obj, int index) => ((IntPtr*)*(IntPtr*)obj)[index];
 
@@ -287,7 +299,8 @@ sealed unsafe class Duplicator : IDisposable
                 Thread.Sleep(Math.Clamp(timeoutMs, 1, 50));
                 return;
             }
-            skipNext = hasImage || Dirty;
+            firstAfterReconnect = hasImage || Dirty;
+            generation++;
         }
         byte* info = stackalloc byte[48]; // DXGI_OUTDUPL_FRAME_INFO
         IntPtr resource;
@@ -303,17 +316,28 @@ sealed unsafe class Duplicator : IDisposable
         try
         {
             if (*(uint*)(info + 16) == 0) return; // AccumulatedFrames: só o ponteiro mudou
-            if (skipNext)
-            {
-                skipNext = false;
-                return;
-            }
             var tid = IID_ID3D11Texture2D;
             Check(Marshal.QueryInterface(resource, ref tid, out var texture));
             try
             {
                 EnsureStaging(texture);
-                ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, void>)Vt(context, 47))(context, staging, texture); // CopyResource
+                ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, void>)Vt(context, 47))(context, probe, texture); // CopyResource
+                bool hashed = TryHash(probe, out ulong hash);
+                long now = Environment.TickCount64;
+                bool stale;
+                if (firstAfterReconnect)
+                {
+                    firstAfterReconnect = false;
+                    stale = true;
+                    if (hashed) RememberStale(hash, now);
+                }
+                else
+                {
+                    stale = hashed && staleImages.TryGetValue(hash, out long seen) && now - seen <= 1000;
+                }
+                debug?.WriteLine($"{now},{generation},{hash:X16},{(stale ? 1 : 0)}");
+                if (stale) return;
+                (staging, probe) = (probe, staging);
                 Dirty = true;
             }
             finally
@@ -328,13 +352,45 @@ sealed unsafe class Duplicator : IDisposable
         }
     }
 
+    // Assinatura (FNV-1a) de uma amostra de pixels (1 a cada 16 em cada 16ª linha).
+    bool TryHash(IntPtr texture, out ulong hash)
+    {
+        hash = 14695981039346656037;
+        byte* mapped = stackalloc byte[16]; // D3D11_MAPPED_SUBRESOURCE
+        if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, uint, int, uint, byte*, int>)Vt(context, 14))(context, texture, 0, 1, 0, mapped) < 0) return false; // Map(READ)
+        try
+        {
+            byte* src = *(byte**)mapped;
+            int pitch = *(int*)(mapped + 8);
+            for (int y = 8; y < Height; y += 16)
+            {
+                uint* row = (uint*)(src + (long)y * pitch);
+                for (int x = 8; x < Width; x += 16) hash = (hash ^ row[x]) * 1099511628211;
+            }
+            return true;
+        }
+        finally
+        {
+            ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, uint, void>)Vt(context, 15))(context, texture, 0); // Unmap
+        }
+    }
+
+    void RememberStale(ulong hash, long now)
+    {
+        staleImages[hash] = now;
+        if (staleImages.Count <= 16) return;
+        foreach (var (key, seen) in staleImages)
+            if (now - seen > 1000) staleImages.Remove(key);
+    }
+
     void EnsureStaging(IntPtr texture)
     {
         byte* desc = stackalloc byte[44]; // D3D11_TEXTURE2D_DESC
         ((delegate* unmanaged[Stdcall]<IntPtr, byte*, void>)Vt(texture, 10))(texture, desc); // GetDesc
         int w = *(int*)desc, h = *(int*)(desc + 4);
-        if (staging != IntPtr.Zero && w == Width && h == Height) return;
+        if (staging != IntPtr.Zero && probe != IntPtr.Zero && w == Width && h == Height) return;
         Release(ref staging);
+        Release(ref probe);
         *(uint*)(desc + 8) = 1; // MipLevels
         *(uint*)(desc + 12) = 1; // ArraySize
         *(uint*)(desc + 20) = 1; // SampleDesc.Count
@@ -346,11 +402,14 @@ sealed unsafe class Duplicator : IDisposable
         IntPtr created;
         Check(((delegate* unmanaged[Stdcall]<IntPtr, byte*, IntPtr, IntPtr*, int>)Vt(device, 5))(device, desc, IntPtr.Zero, &created)); // CreateTexture2D
         staging = created;
+        Check(((delegate* unmanaged[Stdcall]<IntPtr, byte*, IntPtr, IntPtr*, int>)Vt(device, 5))(device, desc, IntPtr.Zero, &created));
+        probe = created;
         if (w != Width || h != Height)
         {
             (Width, Height) = (w, h);
             Frame = new byte[w * h * 4];
             hasImage = false;
+            Dirty = false; // a imagem pendente era do tamanho antigo
         }
     }
 
@@ -382,6 +441,7 @@ sealed unsafe class Duplicator : IDisposable
     {
         Release(ref dupl);
         Release(ref staging);
+        Release(ref probe);
         Release(ref output1);
         Release(ref context);
         Release(ref device);
